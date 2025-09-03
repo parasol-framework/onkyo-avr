@@ -16,20 +16,13 @@
        '!pECNQSTN'  -- Power status query
     }
 
-    local glVerbose = false
-
 ----------------------------------------------------------------------------------------------------------------------
 -- Utility functions
 
 local function getNetworkInterfaces()
-   -- Get network interfaces with broadcast capability
-   -- Simplified approach - use the known working interface from Python discovery
-   local interfaces = {}
-
-   -- Add the network interface that we know works from Python discovery
-   table.insert(interfaces, { addr = '192.168.178.44', broadcast = '192.168.178.255' })
-   msg('Using network interface: 192.168.178.44 -> 192.168.178.255')
-
+   local interfaces = {
+      { addr = '127.0.0.1', broadcast = '255.255.255.255' } -- Default, broadcast from localhost
+   }
    return interfaces
 end
 
@@ -73,17 +66,13 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 -- Discovery implementation
 
-function discovery.setVerbose(verbose)
-   glVerbose = verbose
-end
+function discovery.findReceivers(Timeout, FilterIP, Limit)
+   Timeout = Timeout or DISCOVERY_TIMEOUT
 
-function discovery.findReceivers(timeout, targetIP)
-   timeout = timeout or DISCOVERY_TIMEOUT
-
-   msg('Starting receiver discovery (timeout: ' .. timeout .. 's)')
+   msg('Starting receiver discovery; Timeout: ' .. Timeout .. 's, Filter: ' .. nz(FilterIP,'NIL') .. ', Limit: ' .. nz(Limit, 'NIL'))
 
    local receivers = {}
-   local proc = processing.new({ timeout = timeout })
+   local proc = processing.new({ timeout = Timeout })
    local sockets = {}
 
    -- Create eISCP packets for discovery commands (use raw ISCP, not TCP-wrapped)
@@ -103,10 +92,8 @@ function discovery.findReceivers(timeout, targetIP)
    local pioneerPacketStr = packetToString(pioneerPacket)
    local packetStrs = { onkyoPacketStr, pioneerPacketStr }
 
-   -- Allocate buffers for UDP communication
    local buffer = string.alloc(1024)
    local source = struct.new('IPAddress')
-
    local totalSent = 0
    local interfaces = getNetworkInterfaces()
    
@@ -157,7 +144,12 @@ function discovery.findReceivers(timeout, targetIP)
 
                         if not found then
                            table.insert(receivers, deviceInfo)
-                           msg('Found receiver: ' .. deviceInfo.model .. ' at ' .. senderIP .. ':' .. deviceInfo.port)
+                           msg('Found receiver: ' .. deviceInfo.model .. ' at ' .. senderIP .. ':' .. deviceInfo.port .. ', Limit: ' .. nz(Limit, -1))
+                           if Limit and #receivers >= Limit then
+                              proc.signal()
+                           elseif FilterIP and deviceInfo.ip == FilterIP then
+                              proc.signal()
+                           end
                         end
                      else
                         msg('Could not parse device info from ISCP message')
@@ -196,7 +188,8 @@ function discovery.findReceivers(timeout, targetIP)
    end
 
    if totalSent == 0 then
-      return nil, 'Failed to send any eISCP discovery packets'
+      msg('Failed to send any eISCP discovery packets')
+      return
    end
 
    msg('Sent ' .. totalSent .. ' eISCP discovery packets, waiting for responses...')
@@ -237,8 +230,8 @@ function discovery.findReceiver(targetIP, timeout)
    end
 end
 
-function discovery.listReceivers(timeout)
-   local receivers, err = discovery.findReceivers(timeout)
+function discovery.listReceivers(Timeout)
+   local receivers, err = discovery.findReceivers(Timeout, nil, nil)
    if err then
       print('Discovery error: ' .. err)
       return

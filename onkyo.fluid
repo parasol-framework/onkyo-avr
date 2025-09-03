@@ -11,17 +11,18 @@ Usage: parasol.exe onkyo.fluid [parameter=value ...]
   host=IP           - Target IP address (default: 192.168.178.40)
   port=NUMBER       - Target port (default: 60128)
   timeout=SECONDS   - Connection timeout in seconds (default: 5)
-  verbose=true      - Enable detailed protocol logging
+
+For verbose logging add --log-api
 
 Examples:
-  parasol onkyo.fluid discover=true verbose=true
+  parasol onkyo.fluid discover=true --log-api
   parasol onkyo.fluid host=192.168.178.50 ping=true
   parasol onkyo.fluid power=on timeout=10
   parasol onkyo.fluid verbose=true info=true
 ]]
 
-    glSelf = obj.find('self')
-    glPath = glSelf.workingPath
+    local glSelf = obj.find('self')
+    local glPath = glSelf.workingPath
     local eiscp = loadFile(glPath .. 'lib/eiscp.fluid')
     local discovery = loadFile(glPath .. 'lib/discovery.fluid')
 
@@ -71,17 +72,13 @@ local function doDiscovery()
    print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
    print('')
 
-   if glConfig.verbose then
-      discovery.setVerbose(true)
-   end
-
    local targetIP = nil
    if arg('host') then
       targetIP = glConfig.host
    end
 
-   local receivers, err = discovery.findReceivers(glConfig.timeout, targetIP)
-   if err then
+   local receivers = discovery.findReceivers(glConfig.timeout, targetIP, nil)
+   if not receivers then
       print('Discovery error: ' .. err)
       return
    end
@@ -111,6 +108,16 @@ end
 
 local function doConnect()
    -- Establishes TCP connection to receiver on configured host:port
+
+   if not glConfig.host then
+      local receiver = discovery.findReceiver(nil, glConfig.timeout)
+      glConfig.host = receiver and receiver.ip or nil
+   end
+
+   if not glConfig.host then
+      print('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
+      return false
+   end
 
    print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
 
@@ -202,7 +209,6 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 
     print('Onkyo AV Controller')
-    print('Target: ' .. glConfig.host .. ':' .. glConfig.port)
     print('')
 
     -- Execute commands based on named arguments (only one command allowed per execution)
