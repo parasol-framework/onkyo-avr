@@ -1,5 +1,5 @@
 glHelp = [[
-Onkyo eISCP Control - Command Line Interface
+Onkyo AV Remote - Command Line Interface
 
 Usage: parasol.exe onkyo.fluid [parameter=value ...]
 
@@ -28,10 +28,9 @@ Examples:
 
     -- Configuration with defaults
     local glConfig = {
-       host = '192.168.178.40',  -- Updated to match discovered device
+       host = nil,
        port = 60128,
-       timeout = 5.0,
-       verbose = false
+       timeout = 5.0
     }
 
 ----------------------------------------------------------------------------------------------------------------------
@@ -54,18 +53,13 @@ Examples:
        glConfig.timeout = tonumber(arg('timeout')) or glConfig.timeout
     end
 
-    if arg('verbose') then
-       local verbose = tostring(arg('verbose')):lower()
-       glConfig.verbose = (verbose == 'true' or verbose == '1')
-    end
-
 ----------------------------------------------------------------------------------------------------------------------
 -- Command implementations
 
 local function doDiscovery()
    -- Performs UDP discovery on port 60128 (broadcast or direct IP)
 
-   if arg('host') then
+   if glConfig.host then
       print('Discovering Onkyo receivers at ' .. glConfig.host .. '...')
    else
       print('Discovering Onkyo receivers on the network...')
@@ -74,12 +68,7 @@ local function doDiscovery()
    print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
    print('')
 
-   local targetIP = nil
-   if arg('host') then
-      targetIP = glConfig.host
-   end
-
-   local receivers = discovery.findReceivers(glConfig.timeout, targetIP, tonumber(arg('limit')))
+   local receivers = discovery.findReceivers(glConfig.timeout, glConfig.host, tonumber(arg('limit')))
    if not receivers then
       print('Discovery error: ' .. err)
       return
@@ -105,8 +94,11 @@ local function doDiscovery()
       print('')
    end
 
+   collectgarbage()
    return true  -- Discovery always returns success (even if no receivers found)
 end
+
+----------------------------------------------------------------------------------------------------------------------
 
 local function doConnect()
    -- Establishes TCP connection to receiver on configured host:port
@@ -115,6 +107,8 @@ local function doConnect()
       local receiver = discovery.findReceiver(nil, glConfig.timeout)
       glConfig.host = receiver and receiver.ip or nil
    end
+
+   collectgarbage()
 
    if not glConfig.host then
       print('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
@@ -132,6 +126,8 @@ local function doConnect()
    print('Connected successfully!')
    return true
 end
+
+----------------------------------------------------------------------------------------------------------------------
 
 local function doPing()
    -- Tests connectivity by sending PWRQSTN command and waiting for response
@@ -154,11 +150,13 @@ local function doPing()
    end
 end
 
-local function doPowerControl(action)
+----------------------------------------------------------------------------------------------------------------------
+
+local function doPowerControl(Action)
    -- Sends power control commands: PWR01 (on) or PWR00 (off)
-   action = action:lower()
-   if action != 'on' and action != 'off' then
-      print('Error: Invalid power action "' .. action .. '". Use "on" or "off".')
+   local action = Action:lower()
+   if (action != 'on') and (action != 'off') then
+      print('Error: Invalid power action "' .. nz(Action,'NIL') .. '". Use "on" or "off".')
       return false
    end
 
@@ -170,9 +168,9 @@ local function doPowerControl(action)
 
    local response, err
    if action == 'on' then
-      response, err = eiscp.powerOn()   -- Sends PWR01
+      response, err = eiscp.powerOn()
    else
-      response, err = eiscp.powerOff()  -- Sends PWR00
+      response, err = eiscp.powerOff()
    end
 
    eiscp.disconnect()
@@ -186,6 +184,8 @@ local function doPowerControl(action)
       return false
    end
 end
+
+----------------------------------------------------------------------------------------------------------------------
 
 local function doGetInfo()
    -- Requests device information using NRIIQSTN command
@@ -210,7 +210,7 @@ end
 
 ----------------------------------------------------------------------------------------------------------------------
 
-    print('Onkyo AV Controller')
+    print('Onkyo AV Remote')
     print('')
 
     -- Execute commands based on named arguments (only one command allowed per execution)

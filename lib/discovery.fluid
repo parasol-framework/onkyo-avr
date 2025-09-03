@@ -199,11 +199,6 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
    local result = proc.sleep()
    local duration = (mSys.PreciseTime() - startTime) / 1000000
 
-   -- Clean up sockets
-   for _, socket in ipairs(sockets) do
-      socket = nil
-   end
-
    msg('Discovery completed in ' .. string.format('%.2f', duration) .. 's, found ' .. #receivers .. ' receivers')
 
    return receivers

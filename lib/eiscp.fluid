@@ -160,7 +160,6 @@ function eiscp.connect(host, port, timeout)
    msg('Connecting to ' .. host .. ':' .. port)
    
    local connected = false
-   local connectionError = nil
    local proc = processing.new({ timeout = timeout })
    
    local socket = obj.new('netsocket', {
@@ -168,15 +167,12 @@ function eiscp.connect(host, port, timeout)
       feedback = function(Socket, State)
          msg('Connection state: ' .. tostring(State))
          if State == NTC_CONNECTED then
-            msg('Connected successfully')
+            msg('Connected successfully, signaling...')
             connected = true
             proc.signal()
          elseif State == NTC_DISCONNECTED then
             msg('Connection closed')
-            if not connected then
-               connectionError = 'Connection failed'
-               proc.signal()
-            end
+            proc.signal()
          end
       end,
       incoming = function(Socket)
@@ -204,24 +200,22 @@ function eiscp.connect(host, port, timeout)
    end
    
    -- Wait for connection
-   local result = proc.sleep()
-   if result != ERR_Okay then
-      socket = nil
-      return nil, 'Connection timeout'
-   end
+   proc.sleep(nil, true, false)
    
    if not connected then
       socket = nil
-      return nil, connectionError or 'Connection failed'
-   end
-   
+      return nil, 'Connection failed'
+   end 
+
    glConnection = {
       socket = socket,
       host = host,
       port = port
    }
    
-   return true, nil
+   msg('Connection established to ' .. glConnection.host .. ':' .. glConnection.port)
+
+   return true
 end
 
 function eiscp.disconnect()
