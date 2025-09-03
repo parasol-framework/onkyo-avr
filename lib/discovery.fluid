@@ -206,27 +206,21 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
 
    msg('Discovery completed in ' .. string.format('%.2f', duration) .. 's, found ' .. #receivers .. ' receivers')
 
-   return receivers, nil
+   return receivers
 end
 
-function discovery.findReceiver(targetIP, timeout)
-   local receivers, err = discovery.findReceivers(timeout, targetIP)
-   if err then
-      return nil, err
+function discovery.findReceiver(FilterIP, Timeout)
+   local receivers
+   if FilterIP then -- Return info for a specific receiver
+      receivers = discovery.findReceivers(Timeout, FilterIP, nil)
+   else -- Return the first receiver found
+      receivers = discovery.findReceivers(Timeout, nil, 1)
    end
 
-   if targetIP then
-      -- Look for specific IP
-      for _, receiver in ipairs(receivers) do
-         if receiver.ip == targetIP then
-            return receiver, nil
-         end
-      end
-      return nil, 'Receiver not found at ' .. targetIP
-   elseif #receivers > 0 then
-      return receivers[1], nil -- Return first found
+   if receivers and #receivers > 0 then
+      return receivers[1]
    else
-      return nil, 'No receivers found'
+      msg('Failed to discover any receivers.')
    end
 end
 

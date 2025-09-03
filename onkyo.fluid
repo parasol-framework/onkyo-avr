@@ -64,11 +64,13 @@ Examples:
 
 local function doDiscovery()
    -- Performs UDP discovery on port 60128 (broadcast or direct IP)
+
    if arg('host') then
       print('Discovering Onkyo receivers at ' .. glConfig.host .. '...')
    else
       print('Discovering Onkyo receivers on the network...')
    end
+
    print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
    print('')
 
@@ -77,7 +79,7 @@ local function doDiscovery()
       targetIP = glConfig.host
    end
 
-   local receivers = discovery.findReceivers(glConfig.timeout, targetIP, nil)
+   local receivers = discovery.findReceivers(glConfig.timeout, targetIP, tonumber(arg('limit')))
    if not receivers then
       print('Discovery error: ' .. err)
       return
