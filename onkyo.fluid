@@ -111,9 +111,6 @@ end
 
 local function doConnect()
    -- Establishes TCP connection to receiver on configured host:port
-   if glConfig.verbose then
-      eiscp.setVerbose(true)
-   end
 
    print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
 
