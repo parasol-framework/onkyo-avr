@@ -1,0 +1,381 @@
+--[[
+Core eISCP (Integra Serial Control Protocol) implementation for Onkyo receivers
+Based on the protocol specification from onkyo-eiscp Python project
+--]]
+
+include 'network'
+
+local eiscp = {}
+
+-- Default connection parameters
+local DEFAULT_PORT = 60128
+local DEFAULT_TIMEOUT = 5.0
+local EISCP_VERSION = 0x01
+
+-- Connection state
+local glConnection = nil
+local glVerbose = false
+
+-- Global response handling state for dispatch mechanism
+local glCurrentResponseHandler = nil
+local glResponseBuffer = {}
+local glTotalReceived = 0
+
+----------------------------------------------------------------------------------------------------------------------
+-- Utility functions
+
+local function log(message)
+   if glVerbose then
+      print('[eISCP] ' .. message)
+   end
+end
+
+local function bytesToString(data, length)
+   local result = ''
+   for i = 1, length do
+      result = result .. string.char(data[i])
+   end
+   return result
+end
+
+local function stringToBytes(str)
+   local bytes = {}
+   for i = 1, #str do
+      bytes[i] = string.byte(str, i)
+   end
+   return bytes
+end
+
+local function uint32ToBytes(value)
+   return {
+      bit.band(bit.rshift(value, 24), 0xFF),
+      bit.band(bit.rshift(value, 16), 0xFF),
+      bit.band(bit.rshift(value, 8), 0xFF),
+      bit.band(value, 0xFF)
+   }
+end
+
+local function bytesToUint32(bytes, offset)
+   offset = offset or 1
+   return bit.lshift(bytes[offset], 24) + 
+          bit.lshift(bytes[offset+1], 16) + 
+          bit.lshift(bytes[offset+2], 8) + 
+          bytes[offset+3]
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Protocol implementation
+
+local function createISCPMessage(command)
+   -- Format: !1{command}\r
+   return '!1' .. command .. '\r'
+end
+
+local function createEISCPPacket(iscpMessage)
+   -- eISCP packet structure:
+   -- Magic: 'ISCP' (4 bytes)
+   -- Header size: 16 (4 bytes, big-endian)
+   -- Data size: message length (4 bytes, big-endian)  
+   -- Version: 0x01 (1 byte)
+   -- Reserved: 0x00, 0x00, 0x00 (3 bytes)
+   -- Data: ISCP message
+   
+   local dataSize = #iscpMessage
+   local packet = {}
+   
+   -- Magic 'ISCP'
+   packet[1] = string.byte('I')
+   packet[2] = string.byte('S')
+   packet[3] = string.byte('C')
+   packet[4] = string.byte('P')
+   
+   -- Header size (16 bytes, big-endian)
+   local headerSizeBytes = uint32ToBytes(16)
+   for i = 1, 4 do
+      packet[4 + i] = headerSizeBytes[i]
+   end
+   
+   -- Data size (big-endian)
+   local dataSizeBytes = uint32ToBytes(dataSize)
+   for i = 1, 4 do
+      packet[8 + i] = dataSizeBytes[i]
+   end
+   
+   -- Version
+   packet[13] = EISCP_VERSION
+   
+   -- Reserved bytes
+   packet[14] = 0x00
+   packet[15] = 0x00
+   packet[16] = 0x00
+   
+   -- Append ISCP message data
+   for i = 1, #iscpMessage do
+      packet[16 + i] = string.byte(iscpMessage, i)
+   end
+   
+   return packet
+end
+
+local function parseEISCPResponse(buffer, length)
+   if length < 16 then
+      return nil, 'Incomplete eISCP header'
+   end
+   
+   -- Check magic
+   local magic = bytesToString(buffer, 4)
+   if magic != 'ISCP' then
+      return nil, 'Invalid eISCP magic: ' .. magic
+   end
+   
+   -- Parse header size
+   local headerSize = bytesToUint32(buffer, 5)
+   if headerSize != 16 then
+      return nil, 'Invalid header size: ' .. headerSize
+   end
+   
+   -- Parse data size
+   local dataSize = bytesToUint32(buffer, 9)
+   if length < (16 + dataSize) then
+      return nil, 'Incomplete eISCP data'
+   end
+   
+   -- Parse version
+   local version = buffer[13]
+   if version != EISCP_VERSION then
+      log('Warning: Unexpected eISCP version: ' .. version)
+   end
+   
+   -- Extract ISCP message
+   local iscpMessage = ''
+   for i = 1, dataSize do
+      iscpMessage = iscpMessage .. string.char(buffer[16 + i])
+   end
+   
+   -- Parse ISCP message (!1command\r)
+   if iscpMessage:sub(1, 2) != '!1' then
+      return nil, 'Invalid ISCP message format'
+   end
+   
+   local command = iscpMessage:sub(3, -2) -- Remove !1 and \r
+   
+   return {
+      command = command,
+      raw_message = iscpMessage,
+      packet_size = 16 + dataSize
+   }, nil
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Connection management
+
+function eiscp.setVerbose(verbose)
+   glVerbose = verbose
+end
+
+function eiscp.connect(host, port, timeout)
+   host = host or '192.168.1.40'
+   port = port or DEFAULT_PORT
+   timeout = timeout or DEFAULT_TIMEOUT
+   
+   if glConnection then
+      eiscp.disconnect()
+   end
+   
+   log('Connecting to ' .. host .. ':' .. port)
+   
+   local connected = false
+   local connectionError = nil
+   local proc = processing.new({ timeout = timeout })
+   
+   local socket = obj.new('netsocket', {
+      name = 'OnkyoClient',
+      feedback = function(Socket, State)
+         log('Connection state: ' .. tostring(State))
+         if State == NTC_CONNECTED then
+            log('Connected successfully')
+            connected = true
+            proc.signal()
+         elseif State == NTC_DISCONNECTED then
+            log('Connection closed')
+            if not connected then
+               connectionError = 'Connection failed'
+               proc.signal()
+            end
+         end
+      end,
+      incoming = function(Socket)
+         -- Dispatch mechanism - handle incoming data based on current handler
+         if glCurrentResponseHandler then
+            glCurrentResponseHandler(Socket)
+         else
+            -- Default handler - just read and discard
+            local tempBuffer = string.alloc(1024)
+            local err, bytesRead = Socket.acRead(tempBuffer)
+            if err == ERR_Okay and bytesRead > 0 then
+               log('Received ' .. bytesRead .. ' bytes (no handler set)')
+            end
+         end
+      end
+   })
+   
+   if not socket then
+      return nil, 'Failed to create socket'
+   end
+   
+   local err = socket.mtConnect(host, port)
+   if err != ERR_Okay then
+      return nil, 'Connection failed: ' .. mSys.GetErrorMsg(err)
+   end
+   
+   -- Wait for connection
+   local result = proc.sleep()
+   if result != ERR_Okay then
+      socket = nil
+      return nil, 'Connection timeout'
+   end
+   
+   if not connected then
+      socket = nil
+      return nil, connectionError or 'Connection failed'
+   end
+   
+   glConnection = {
+      socket = socket,
+      host = host,
+      port = port
+   }
+   
+   return true, nil
+end
+
+function eiscp.disconnect()
+   if glConnection then
+      log('Disconnecting from ' .. glConnection.host)
+      glConnection.socket = nil
+      glConnection = nil
+   end
+end
+
+function eiscp.isConnected()
+   return glConnection != nil
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command interface
+
+function eiscp.sendCommand(command, timeout)
+   if not glConnection then
+      return nil, 'Not connected'
+   end
+   
+   timeout = timeout or DEFAULT_TIMEOUT
+   
+   log('Sending command: ' .. command)
+   
+   -- Create ISCP message and eISCP packet
+   local iscpMessage = createISCPMessage(command)
+   local packet = createEISCPPacket(iscpMessage)
+   
+   -- Convert packet to string for transmission
+   local packetData = ''
+   for i = 1, #packet do
+      packetData = packetData .. string.char(packet[i])
+   end
+   
+   -- Send packet
+   local err = glConnection.socket.acWrite(packetData)
+   if err != ERR_Okay then
+      return nil, 'Failed to send command: ' .. mSys.GetErrorMsg(err)
+   end
+   
+   log('Packet sent (' .. #packetData .. ' bytes)')
+   
+   -- Wait for response
+   local proc = processing.new({ timeout = timeout })
+   local responseData = nil
+   local responseError = nil
+   
+   -- Reset global response state
+   glResponseBuffer = {}
+   glTotalReceived = 0
+   
+   -- Set up response handler using dispatch mechanism
+   glCurrentResponseHandler = function(Socket)
+      local tempBuffer = string.alloc(1024)
+      local err, bytesRead = Socket.acRead(tempBuffer)
+      
+      if err == ERR_Okay and bytesRead > 0 then
+         -- Append to our buffer
+         for i = 1, bytesRead do
+            table.insert(glResponseBuffer, string.byte(tempBuffer, i))
+         end
+         glTotalReceived = glTotalReceived + bytesRead
+         
+         log('Received ' .. bytesRead .. ' bytes (total: ' .. glTotalReceived .. ')')
+         
+         -- Try to parse response
+         if glTotalReceived >= 16 then
+            local response, parseError = parseEISCPResponse(glResponseBuffer, glTotalReceived)
+            if response then
+               responseData = response
+               proc.signal()
+            elseif glTotalReceived >= 1024 then -- Prevent infinite growth
+               responseError = parseError or 'Response too large'
+               proc.signal()
+            end
+         end
+      elseif err != ERR_Okay then
+         responseError = 'Read error: ' .. mSys.GetErrorMsg(err)
+         proc.signal()
+      end
+   end
+   
+   local result = proc.sleep()
+   
+   -- Clear the response handler
+   glCurrentResponseHandler = nil
+   
+   if result != ERR_Okay then
+      return nil, 'Response timeout'
+   end
+   
+   if responseError then
+      return nil, responseError
+   end
+   
+   if responseData then
+      log('Response: ' .. responseData.command)
+      return responseData, nil
+   end
+   
+   return nil, 'No response received'
+end
+
+function eiscp.ping()
+   -- Send a simple query command to test connectivity
+   return eiscp.sendCommand('PWRQSTN') -- Power status query
+end
+
+function eiscp.powerOn()
+   return eiscp.sendCommand('PWR01')
+end
+
+function eiscp.powerOff()
+   return eiscp.sendCommand('PWR00')
+end
+
+function eiscp.getDeviceInfo()
+   return eiscp.sendCommand('NRIIQSTN') -- Device information query
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Export packet creation functions for discovery
+eiscp.createISCPMessage = createISCPMessage
+eiscp.createEISCPPacket = createEISCPPacket
+eiscp.parseEISCPResponse = parseEISCPResponse
+
+----------------------------------------------------------------------------------------------------------------------
+-- Export public API
+
+return eiscp

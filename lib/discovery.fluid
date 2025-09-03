@@ -1,0 +1,271 @@
+--[[ Network discovery for Onkyo receivers using UDP broadcast --]]
+
+    include 'network'
+    if not mNet then mNet = mod.load('network') end
+
+    local glSelf = obj.find('self')
+    local glPath = glSelf.workingPath
+    local eiscp = loadFile(glPath .. 'lib/eiscp.fluid')
+
+    local discovery = {}
+
+    local DISCOVERY_PORT = 60128
+    local DISCOVERY_TIMEOUT = 5.0
+    local DISCOVERY_COMMANDS = {
+       '!xECNQSTN', -- Extended device information query
+       '!pECNQSTN'  -- Power status query
+    }
+
+    local glVerbose = false
+
+----------------------------------------------------------------------------------------------------------------------
+-- Utility functions
+
+local function getNetworkInterfaces()
+   -- Get network interfaces with broadcast capability
+   -- Simplified approach - use the known working interface from Python discovery
+   local interfaces = {}
+
+   -- Add the network interface that we know works from Python discovery
+   table.insert(interfaces, { addr = '192.168.178.44', broadcast = '192.168.178.255' })
+   msg('Using network interface: 192.168.178.44 -> 192.168.178.255')
+
+   return interfaces
+end
+
+local function parseDeviceInfo(response)
+   -- Parse response format from discovery
+   -- Can be: !1ECNTX-NR609/60128/DX/001122334455 or ECNTX-NR609/60128/DX/001122334455
+   if not response or #response < 10 then
+      return nil
+   end
+
+   -- Handle both formats: with or without !1ECN prefix
+   local data = response:match('^!1ECN(.+)$') or response:match('^ECN(.+)$')
+   if not data then
+      return nil
+   end
+
+   local parts = {}
+   for part in string.gmatch(data, '[^/]+') do
+      table.insert(parts, part)
+   end
+
+   if #parts < 4 then
+      msg('Warning: Incomplete device info: ' .. data)
+      return {
+         model = parts[1] or 'Unknown',
+         port = tonumber(parts[2]) or DISCOVERY_PORT,
+         area = parts[3] or 'Unknown',
+         mac = parts[4] or 'Unknown'
+      }
+   end
+
+   return {
+      model = parts[1],
+      port  = tonumber(parts[2]),
+      area  = parts[3],
+      mac   = parts[4],
+      raw   = response
+   }
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Discovery implementation
+
+function discovery.setVerbose(verbose)
+   glVerbose = verbose
+end
+
+function discovery.findReceivers(timeout, targetIP)
+   timeout = timeout or DISCOVERY_TIMEOUT
+
+   msg('Starting receiver discovery (timeout: ' .. timeout .. 's)')
+
+   local receivers = {}
+   local proc = processing.new({ timeout = timeout })
+   local sockets = {}
+
+   -- Create eISCP packets for discovery commands (use raw ISCP, not TCP-wrapped)
+   local onkyoPacket = eiscp.createEISCPPacket('!xECNQSTN')
+   local pioneerPacket = eiscp.createEISCPPacket('!pECNQSTN')
+
+   -- Convert packet arrays to strings for transmission
+   local function packetToString(packet)
+      local str = ''
+      for i = 1, #packet do
+         str = str .. string.char(packet[i])
+      end
+      return str
+   end
+
+   local onkyoPacketStr = packetToString(onkyoPacket)
+   local pioneerPacketStr = packetToString(pioneerPacket)
+   local packetStrs = { onkyoPacketStr, pioneerPacketStr }
+
+   -- Allocate buffers for UDP communication
+   local buffer = string.alloc(1024)
+   local source = struct.new('IPAddress')
+
+   local totalSent = 0
+   local interfaces = getNetworkInterfaces()
+   
+   for _, interface in ipairs(interfaces) do
+      msg('Using interface ' .. interface.addr .. ' -> broadcast ' .. interface.broadcast)
+      
+      for _, packetStr in ipairs(packetStrs) do
+         -- Create socket that can both send and receive (like Python version)
+         local socket = obj.new('netsocket', { 
+            flags = 'UDP|BROADCAST',
+            incoming = function(Socket)
+               local err, bytesRead = Socket.mtRecvFrom(source, buffer)
+               if (err == ERR_Okay) and (bytesRead > 0) then
+                  local senderIP = mNet.AddressToStr(source)
+                  local senderPort = source.port
+
+                  msg('Received ' .. bytesRead .. ' bytes from ' .. senderIP .. ':' .. senderPort)
+
+                  -- Skip echo packets from our own machine
+                  if senderIP == interface.addr or string.find(senderIP, '192.168.178.44') then
+                     msg('Skipping echo packet from our own interface')
+                     return
+                  end
+
+                  -- Parse eISCP packet - convert string to byte array
+                  local byteArray = {}
+                  for i = 1, bytesRead do
+                     byteArray[i] = string.byte(buffer, i)
+                  end
+
+                  local response, parseErr = eiscp.parseEISCPResponse(byteArray, bytesRead)
+                  if response then
+                     msg('ISCP Message: ' .. response.command)
+
+                     local deviceInfo = parseDeviceInfo(response.command)
+                     if deviceInfo then
+                        deviceInfo.ip = senderIP
+                        deviceInfo.discovered_port = senderPort
+
+                        -- Check if we already found this device
+                        local found = false
+                        for _, receiver in ipairs(receivers) do
+                           if receiver.ip == senderIP and receiver.model == deviceInfo.model then
+                              found = true
+                              break
+                           end
+                        end
+
+                        if not found then
+                           table.insert(receivers, deviceInfo)
+                           msg('Found receiver: ' .. deviceInfo.model .. ' at ' .. senderIP .. ':' .. deviceInfo.port)
+                        end
+                     else
+                        msg('Could not parse device info from ISCP message')
+                     end
+                  else
+                     msg('Raw data (not eISCP): ' .. buffer:sub(1, math.min(bytesRead, 20)))
+                  end
+               elseif err != ERR_Okay then
+                  msg('RecvFrom() error: ' .. mSys.GetErrorMsg(err))
+               end
+            end
+         })
+         
+         if socket then
+            -- Send to broadcast address
+            local dest = struct.new('IPAddress')
+            local addrErr = mNet.StrToAddress(interface.broadcast, dest)
+            if addrErr == ERR_Okay then
+               dest.port = DISCOVERY_PORT
+               
+               local err, bytesSent = socket.mtSendTo(dest, packetStr)
+               if err == ERR_Okay then
+                  totalSent = totalSent + 1
+                  msg('Sent eISCP discovery packet to ' .. interface.broadcast .. ' (' .. bytesSent .. ' bytes)')
+                  table.insert(sockets, socket)
+               else
+                  msg('Failed to send via interface ' .. interface.addr .. ': ' .. mSys.GetErrorMsg(err))
+                  socket = nil
+               end
+            else
+               msg('Failed to convert broadcast address ' .. interface.broadcast .. ': ' .. mSys.GetErrorMsg(addrErr))
+               socket = nil
+            end
+         end
+      end
+   end
+
+   if totalSent == 0 then
+      return nil, 'Failed to send any eISCP discovery packets'
+   end
+
+   msg('Sent ' .. totalSent .. ' eISCP discovery packets, waiting for responses...')
+
+   -- Wait for responses
+   local startTime = mSys.PreciseTime()
+   local result = proc.sleep()
+   local duration = (mSys.PreciseTime() - startTime) / 1000000
+
+   -- Clean up sockets
+   for _, socket in ipairs(sockets) do
+      socket = nil
+   end
+
+   msg('Discovery completed in ' .. string.format('%.2f', duration) .. 's, found ' .. #receivers .. ' receivers')
+
+   return receivers, nil
+end
+
+function discovery.findReceiver(targetIP, timeout)
+   local receivers, err = discovery.findReceivers(timeout, targetIP)
+   if err then
+      return nil, err
+   end
+
+   if targetIP then
+      -- Look for specific IP
+      for _, receiver in ipairs(receivers) do
+         if receiver.ip == targetIP then
+            return receiver, nil
+         end
+      end
+      return nil, 'Receiver not found at ' .. targetIP
+   elseif #receivers > 0 then
+      return receivers[1], nil -- Return first found
+   else
+      return nil, 'No receivers found'
+   end
+end
+
+function discovery.listReceivers(timeout)
+   local receivers, err = discovery.findReceivers(timeout)
+   if err then
+      print('Discovery error: ' .. err)
+      return
+   end
+
+   if #receivers == 0 then
+      print('No Onkyo receivers found on the network')
+      return
+   end
+
+   print('Found ' .. #receivers .. ' Onkyo receiver(s):')
+   print('')
+
+   for i, receiver in ipairs(receivers) do
+      print('  ' .. i .. '. ' .. receiver.model)
+      print('     IP: ' .. (receiver.ip or 'Unknown'))
+      print('     Port: ' .. (receiver.port or 'Unknown'))
+      print('     Area: ' .. (receiver.area or 'Unknown'))
+      print('     MAC: ' .. (receiver.mac or 'Unknown'))
+      if receiver.raw then
+         print('     Raw: ' .. receiver.raw)
+      end
+      print('')
+   end
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Export public API
+
+   return discovery

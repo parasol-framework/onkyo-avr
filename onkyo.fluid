@@ -1,0 +1,232 @@
+glHelp = [[
+Onkyo eISCP Control - Command Line Interface
+
+Usage: parasol.exe onkyo.fluid [parameter=value ...]
+
+  help=true         - Show this help message and exit
+  discover=true     - Discover Onkyo receivers via UDP broadcast
+  ping=true         - Test TCP connectivity with power status query
+  power=on|off      - Send power control command (on or off)
+  info=true         - Request device information via NRIIQSTN command
+  host=IP           - Target IP address (default: 192.168.178.40)
+  port=NUMBER       - Target port (default: 60128)
+  timeout=SECONDS   - Connection timeout in seconds (default: 5)
+  verbose=true      - Enable detailed protocol logging
+
+Examples:
+  parasol onkyo.fluid discover=true verbose=true
+  parasol onkyo.fluid host=192.168.178.50 ping=true
+  parasol onkyo.fluid power=on timeout=10
+  parasol onkyo.fluid verbose=true info=true
+]]
+
+    glSelf = obj.find('self')
+    glPath = glSelf.workingPath
+    local eiscp = loadFile(glPath .. 'lib/eiscp.fluid')
+    local discovery = loadFile(glPath .. 'lib/discovery.fluid')
+
+    -- Configuration with defaults
+    local glConfig = {
+       host = '192.168.178.40',  -- Updated to match discovered device
+       port = 60128,
+       timeout = 5.0,
+       verbose = false
+    }
+
+----------------------------------------------------------------------------------------------------------------------
+-- Process command line arguments using key=value format (following http_server.fluid pattern)
+
+    if arg('help') then
+       print(glHelp)
+       return
+    end
+
+    if arg('host') then
+       glConfig.host = arg('host')
+    end
+
+    if arg('port') then
+       glConfig.port = tonumber(arg('port')) or glConfig.port
+    end
+
+    if arg('timeout') then
+       glConfig.timeout = tonumber(arg('timeout')) or glConfig.timeout
+    end
+
+    if arg('verbose') then
+       local verbose = tostring(arg('verbose')):lower()
+       glConfig.verbose = (verbose == 'true' or verbose == '1')
+    end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command implementations
+
+local function doDiscovery()
+   -- Performs UDP discovery on port 60128 (broadcast or direct IP)
+   if arg('host') then
+      print('Discovering Onkyo receivers at ' .. glConfig.host .. '...')
+   else
+      print('Discovering Onkyo receivers on the network...')
+   end
+   print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
+   print('')
+
+   if glConfig.verbose then
+      discovery.setVerbose(true)
+   end
+
+   local targetIP = nil
+   if arg('host') then
+      targetIP = glConfig.host
+   end
+
+   local receivers, err = discovery.findReceivers(glConfig.timeout, targetIP)
+   if err then
+      print('Discovery error: ' .. err)
+      return
+   end
+
+   if #receivers == 0 then
+      print('No Onkyo receivers found on the network')
+      return
+   end
+
+   print('Found ' .. #receivers .. ' Onkyo receiver(s):')
+   print('')
+
+   for i, receiver in ipairs(receivers) do
+      print('  ' .. i .. '. ' .. receiver.model)
+      print('     IP: ' .. (receiver.ip or 'Unknown'))
+      print('     Port: ' .. (receiver.port or 'Unknown'))
+      print('     Area: ' .. (receiver.area or 'Unknown'))
+      print('     MAC: ' .. (receiver.mac or 'Unknown'))
+      if receiver.raw then
+         print('     Raw: ' .. receiver.raw)
+      end
+      print('')
+   end
+
+   return true  -- Discovery always returns success (even if no receivers found)
+end
+
+local function doConnect()
+   -- Establishes TCP connection to receiver on configured host:port
+   if glConfig.verbose then
+      eiscp.setVerbose(true)
+   end
+
+   print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
+
+   local success, err = eiscp.connect(glConfig.host, glConfig.port, glConfig.timeout)
+   if not success then
+      print('Connection failed: ' .. (err or 'Unknown error'))
+      return false
+   end
+
+   print('Connected successfully!')
+   return true
+end
+
+local function doPing()
+   -- Tests connectivity by sending PWRQSTN command and waiting for response
+   if not doConnect() then
+      return false
+   end
+
+   print('Testing connectivity...')
+
+   local response, err = eiscp.ping()  -- Sends PWRQSTN (power status query)
+   eiscp.disconnect()
+
+   if response then
+      print('Ping successful!')
+      print('Response: ' .. response.command)
+      return true
+   else
+      print('Ping failed: ' .. (err or 'No response'))
+      return false
+   end
+end
+
+local function doPowerControl(action)
+   -- Sends power control commands: PWR01 (on) or PWR00 (off)
+   action = action:lower()
+   if action != 'on' and action != 'off' then
+      print('Error: Invalid power action "' .. action .. '". Use "on" or "off".')
+      return false
+   end
+
+   if not doConnect() then
+      return false
+   end
+
+   print('Setting power ' .. action .. '...')
+
+   local response, err
+   if action == 'on' then
+      response, err = eiscp.powerOn()   -- Sends PWR01
+   else
+      response, err = eiscp.powerOff()  -- Sends PWR00
+   end
+
+   eiscp.disconnect()
+
+   if response then
+      print('Power command sent successfully!')
+      print('Response: ' .. response.command)
+      return true
+   else
+      print('Power command failed: ' .. (err or 'No response'))
+      return false
+   end
+end
+
+local function doGetInfo()
+   -- Requests device information using NRIIQSTN command
+   if not doConnect() then
+      return false
+   end
+
+   print('Requesting device information...')
+
+   local response, err = eiscp.getDeviceInfo()  -- Sends NRIIQSTN
+   eiscp.disconnect()
+
+   if response then
+      print('Device information received!')
+      print('Response: ' .. response.command)
+      return true
+   else
+      print('Info request failed: ' .. (err or 'No response'))
+      return false
+   end
+end
+
+----------------------------------------------------------------------------------------------------------------------
+
+    print('Onkyo AV Controller')
+    print('Target: ' .. glConfig.host .. ':' .. glConfig.port)
+    print('')
+
+    -- Execute commands based on named arguments (only one command allowed per execution)
+
+    local commandExecuted = false
+    local success = false
+
+    if arg('discover') then
+       success = doDiscovery()
+       commandExecuted = true
+    elseif arg('ping') then
+       success = doPing()
+       commandExecuted = true
+    elseif arg('power') then
+       success = doPowerControl(arg('power'))
+       commandExecuted = true
+    elseif arg('info') then
+       success = doGetInfo()
+       commandExecuted = true
+    end
+
+    if not commandExecuted then
+       print(glHelp)
+    end
