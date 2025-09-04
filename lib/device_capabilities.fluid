@@ -27,7 +27,6 @@ function capabilities.parseDeviceInfo(response)
    info.year     = nz(info.xml.getKey('/response/device/year'), nil)
    info.category = nz(info.xml.getKey('/response/device/category'), nil)
    info.serial   = nz(info.xml.getKey('/response/device/deviceserial'), nil)
-   print('"' .. nz(info.model,'NIL') .. '"')
    return info
 end
 
@@ -110,10 +109,9 @@ function capabilities.isModelInSet(model, setName)
 end
 
 ----------------------------------------------------------------------------------------------------------------------
--- Command filtering
-
 -- Filter command values based on device modelsets
 -- Returns only the values that are available for the specified modelsets
+
 function capabilities.filterCommandValues(command, deviceModelsets)
    if not command or not command.values then
       return {}
@@ -145,6 +143,7 @@ function capabilities.filterCommandValues(command, deviceModelsets)
    return filtered
 end
 
+----------------------------------------------------------------------------------------------------------------------
 -- Get available commands for a device model in a specific zone
 
 function capabilities.getAvailableCommands(model, zone)
@@ -176,54 +175,9 @@ function capabilities.getAvailableCommands(model, zone)
    return availableCommands
 end
 
--- Get statistics about command availability for a device model
-function capabilities.getCommandStats(model, zone)
-   zone = zone or 'main'
-
-   if not cmd.commands or not cmd.commands[zone] then
-      return nil, 'Invalid zone: ' .. zone
-   end
-
-   local modelsets = capabilities.findModelsets(model)
-   local stats = {
-      totalCommands = 0,
-      availableCommands = 0,
-      universalCommands = 0,
-      restrictedCommands = 0,
-      modelsets = modelsets
-   }
-
-   for cmdCode, cmdData in pairs(cmd.commands[zone]) do
-      stats.totalCommands = stats.totalCommands + 1
-
-      local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
-      local hasRestrictedValues = false
-
-      -- Check if command has any model-restricted values
-      for _, valueData in pairs(cmdData.values or {}) do
-         if valueData.models then
-            hasRestrictedValues = true
-            break
-         end
-      end
-
-      if next(filteredValues) then
-         stats.availableCommands = stats.availableCommands + 1
-         if hasRestrictedValues then
-            stats.restrictedCommands = stats.restrictedCommands + 1
-         else
-            stats.universalCommands = stats.universalCommands + 1
-         end
-      end
-   end
-
-   return stats
-end
-
 ----------------------------------------------------------------------------------------------------------------------
--- Utility functions
-
 -- Get list of all available zones for commands
+
 function capabilities.getAvailableZones()
    if not cmd.commands then
       return {}
@@ -238,18 +192,4 @@ function capabilities.getAvailableZones()
    return zones
 end
 
--- Get summary of all modelsets
-function capabilities.getModelsetSummary()
-   if not cmd.modelsets then
-      return {}
-   end
-
-   local summary = {}
-   for setName, models in pairs(cmd.modelsets) do
-      summary[setName] = #models
-   end
-
-   return summary
-end
-
-return capabilities
+   return capabilities

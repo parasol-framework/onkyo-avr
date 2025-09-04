@@ -19,47 +19,6 @@ Core eISCP (Integra Serial Control Protocol) implementation for Onkyo receivers
     Connection.__index = Connection
 
 ----------------------------------------------------------------------------------------------------------------------
--- Connection constructor
-
-local function createConnection(Socket, Host, Port, LogFile)
-   local conn = {
-      socket = Socket,
-      host = Host,
-      port = Port,
-      currentResponseHandler = nil,
-      lastResponse = nil,
-      deviceInfo = nil,
-      deviceModel = nil,
-      deviceModelsets = {},
-      responseLogHandle = nil
-   }
-   setmetatable(conn, Connection)
-
-   -- Open response output file if specified
-   if LogFile then
-      local err, type = mSys.AnalysePath(LogFile)
-      local flags
-
-      if err != ERR_Okay then
-         flags = 'NEW|WRITE'
-      else
-         flags = 'WRITE'
-      end
-
-      local file = obj.new('file', { path = LogFile, flags = flags })
-      if file then
-         if flags == 'WRITE' then file.acSeek(0, SEEK_END) end
-         conn.responseLogHandle = file
-         msg('Response logging enabled to: ' .. LogFile .. ' (flags: ' .. flags .. ')')
-      else
-         msg('Warning: Failed to open response output file: ' .. LogFile)
-      end
-   end
-
-   return conn
-end
-
-----------------------------------------------------------------------------------------------------------------------
 -- Utility functions
 
 local function bytesToString(data, length)
@@ -239,50 +198,112 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
 
    msg('Connecting to ' .. Host .. ':' .. Port)
 
-   local connectionError = ERR_Okay
-   local proc = processing.new({ timeout = Timeout })
-   local connection = nil
+   local connect_error = ERR_Okay
 
-   local socket = obj.new('netsocket', {
+   local connection = {
+      socket = socket,
+      lastResponse = nil,
+      deviceInfo = nil,
+      deviceModel = nil,
+      deviceModelsets = {},
+      responseLogHandle = nil,
+      responses = { },
+      buffer = { },
+      proc = processing.new({ timeout = DEFAULT_TIMEOUT })
+   }
+
+   connection.socket = obj.new('netsocket', {
       name = 'OnkyoClient',
       feedback = function(Socket, State)
          msg('Connection state: ' .. tostring(State))
          if State == NTC_CONNECTED then
             msg('Connected successfully, signaling...')
-            connectionError = ERR_Okay
-            proc.signal()
+            connect_error = ERR_Okay
+            connection.proc.signal()
          elseif State == NTC_DISCONNECTED then
             msg('Connection closed')
-            connectionError = ERR_Disconnected
-            proc.signal()
+            connect_error = ERR_Disconnected
+            connection.proc.signal()
          elseif State == NTC_FAILED then
             msg('Connection failed')
-            connectionError = ERR_ConnectionRefused
-            proc.signal()
+            connect_error = ERR_ConnectionRefused
+            connection.proc.signal()
          end
       end,
       incoming = function(Socket)
-         -- Dispatch mechanism - handle incoming data based on current handler
-         if connection and connection.currentResponseHandler then
-            connection.currentResponseHandler(Socket)
-         else
-            -- Default handler - just read and discard
-            local read_buffer = string.alloc(1024)
-            local err, bytesRead = Socket.acRead(read_buffer)
-            if err == ERR_Okay and bytesRead > 0 then
-               msg('Received ' .. bytesRead .. ' bytes (no handler set)')
+         local read_buffer = string.alloc(1024)
+         local err, bytes_read = Socket.acRead(read_buffer)
+         msg('Received ' .. bytes_read .. ' bytes (err: ' .. err .. ')')
+
+         if (err == ERR_Okay) and (bytes_read > 0) then
+            -- Append to our buffer
+            -- TODO This is slow, probably could use a preallocated string
+            for i = 1, bytes_read do
+               table.insert(connection.buffer, string.byte(read_buffer, i))
             end
+         
+            -- Try to parse response
+            if #connection.buffer >= 16 then
+               local response = parseEISCPResponse(connection.buffer)
+               if response then -- Full response received
+                  local cmd = response.command()
+                  msg('Parsed response: ' .. cmd .. ' (' .. response.packet_size .. ' bytes)')
+                  connection.responses[cmd] = response
+
+                  -- Remove consumed bytes from buffer, keep remaining data
+                  local consumed = response.packet_size
+                  local remaining = {}
+                  for i = consumed + 1, #connection.buffer do
+                      table.insert(remaining, connection.buffer[i])
+                  end
+                  connection.buffer = remaining
+                  msg('Reduced buffer content to ' .. #connection.buffer .. ' bytes.')
+
+                  connection.proc.signal()
+               end
+
+            end
+         elseif err != ERR_Okay then
+            resp_error = err
+            connection.proc.signal()
          end
       end
    })
 
-   check(socket.mtConnect(Host, Port))
-   check(proc.sleep(nil, true, false))
-   check(connectionError)
+   check(connection.socket.mtConnect(Host, Port))
+   check(connection.proc.sleep(Timeout, true, false)) -- Wait for connection to succeed
+   check(connect_error)
 
-   connection = createConnection(socket, Host, Port, LogFile)
+   setmetatable(connection, Connection)
 
-   msg('Connection established to ' .. connection.host .. ':' .. connection.port)
+   -- Open response output file if specified
+
+   if LogFile then
+      local err, type = mSys.AnalysePath(LogFile)
+      local flags
+
+      if err != ERR_Okay then
+         flags = 'NEW|WRITE'
+      else
+         flags = 'WRITE'
+      end
+
+      local file = obj.new('file', { path = LogFile, flags = flags })
+      if file then
+         if flags == 'WRITE' then file.acSeek(0, SEEK_END) end
+         conn.responseLogHandle = file
+         msg('Response logging enabled to: ' .. LogFile .. ' (flags: ' .. flags .. ')')
+      else
+         msg('Warning: Failed to open response output file: ' .. LogFile)
+      end
+   end
+
+   msg('Connection established to ' .. Host .. ':' .. Port)
+
+   -- A short pause is necessary because the AVR may send a message on connection before it will start
+   -- accepting commands.
+
+   connection.proc.sleep(0.1)
    return connection
 end
 
@@ -308,12 +329,12 @@ end
 
 function Connection:disconnect()
    if self.socket then
-      msg('Disconnecting from ' .. self.host)
+      msg('Disconnecting')
 
       self.responseLogHandle = nil
       self.socket = nil
-      self.currentResponseHandler = nil
       self.lastResponse = nil
+      self.buffer = { }
       collectgarbage()
    end
 end
@@ -333,9 +354,9 @@ function Connection:clearPendingResponses()
    local cleared = 0
    local read_buffer = string.alloc(1024)
    while true do
-      local err, bytesRead = self.socket.acRead(read_buffer)
-      if (err == ERR_Okay) and (bytesRead > 0) then
-         cleared = cleared + bytesRead
+      local err, bytes_read = self.socket.acRead(read_buffer)
+      if (err == ERR_Okay) and (bytes_read > 0) then
+         cleared = cleared + bytes_read
       else
          break -- No more data available
       end
@@ -349,64 +370,20 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 -- Helper function to read a single response with timeout.  Throws on error.
 
-function Connection:readSingleResponse(Prefix, Timeout)
-   Timeout = Timeout or 1
+function Connection:readResponse(Command, Timeout)
+   local end_time = mSys.PreciseTime() + (Timeout * 1000000)
 
-   local proc = processing.new({ timeout = Timeout })
-   local resp_data = nil
-   local resp_error = ERR_Okay
-   local buffer = { }
-
-   -- Hook into the socket incoming function
-   self.currentResponseHandler = function(Socket)
-      local read_buffer = string.alloc(1024)
-      local err, bytesRead = Socket.acRead(read_buffer)
-
-      if (err == ERR_Okay) and (bytesRead > 0) then
-         -- Append to our buffer
-         -- TODO This is slow, probably could use a preallocated string
-         for i = 1, bytesRead do
-            table.insert(buffer, string.byte(read_buffer, i))
-         end
-         
-         -- Try to parse response
-         if #buffer >= 16 then
-            local response = parseEISCPResponse(buffer)
-            if response then -- Full response received
-               if ((not Prefix) or (response:command() == Prefix)) then
-                  resp_data = response
-                  proc.signal()
-                else
-                   msg('Ignoring non-matching response: ' .. response:command() .. ' (expected ' .. Prefix .. ')')
-                   -- Remove consumed bytes from buffer, keep remaining data
-                   local consumed = response.packet_size
-                   local remaining = {}
-                   for i = consumed + 1, #buffer do
-                      table.insert(remaining, buffer[i])
-                   end
-                   buffer = remaining
-                   msg('Reduced buffer content to ' .. #buffer .. ' bytes.')
-                end
-            elseif #buffer >= MAX_RESPONSE_LEN then
-               resp_error = ERR_InvalidData
-               proc.signal()
-            end
-         end
-      elseif err != ERR_Okay then
-         resp_error = err
-         proc.signal()
+   while true do
+      if self.responses[Command] then
+         return self.responses[Command]
       end
-   end
 
-   local err = proc.sleep()
-
-   self.currentResponseHandler = nil
-
-   if resp_error == ERR_Okay and resp_data then
-      return resp_data
-   else
-      msg('Failed to read response, ' .. #buffer .. ' unprocessed bytes in buffer.')
-      raise(resp_error or err)
+      local time_left = (end_time - mSys.PreciseTime()) / 1000000
+      if time_left > 0 then
+         self.proc.sleep(time_left)
+      else
+         raise(ERR_TimeOut)
+      end
    end
 end
 
@@ -436,7 +413,7 @@ function Connection:sendCommand(Command, Timeout)
    check(self.socket.acWrite(packet_data))
    msg('Packet sent (' .. #packet_data .. ' bytes); Timeout (s): ' .. Timeout)
 
-   local response = self:readSingleResponse(Command:sub(1, 3), Timeout)
+   local response = self:readResponse(Command:sub(1, 3), Timeout)
 
    msg('Found matching response for ' .. Command .. ': ' .. #response.data .. ' bytes')
    self.lastResponse = response

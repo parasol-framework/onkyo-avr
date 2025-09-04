@@ -206,7 +206,6 @@ function display.showAvailableCommands(model, zone, verbose)
 
    local availableCommands = capabilities.getAvailableCommands(model, zone)
    local modelsets = capabilities.findModelsets(model)
-   local stats = capabilities.getCommandStats(model, zone)
 
    if not next(availableCommands) then
       print('No commands available for model: ' .. (model or 'unknown'))
@@ -267,44 +266,6 @@ function display.showAvailableCommands(model, zone, verbose)
          end
       end
       print('')
-   end
-
-   -- Display statistics
-   if stats then
-      print('=== SUMMARY ===')
-      print(string.format('Total commands available: %d/%d', stats.availableCommands, stats.totalCommands))
-      print(string.format('Universal commands: %d', stats.universalCommands))
-      print(string.format('Model-specific commands: %d', stats.restrictedCommands))
-      if not verbose then
-         print('\n[Use verbose=true to see all command values and descriptions]')
-      end
-   end
-end
-
--- Display command statistics for a model
-function display.showCommandStats(model, zone)
-   zone = zone or 'main'
-
-   local stats = capabilities.getCommandStats(model, zone)
-   if not stats then
-      print('No statistics available')
-      return
-   end
-
-   print('=== COMMAND STATISTICS ===')
-   print('Model: ' .. (model or 'unknown'))
-   print('Zone: ' .. zone)
-   print('')
-   print(string.format('Total commands: %d', stats.totalCommands))
-   print(string.format('Available commands: %d', stats.availableCommands))
-   print(string.format('Universal commands: %d', stats.universalCommands))
-   print(string.format('Model-specific commands: %d', stats.restrictedCommands))
-   print(string.format('Blocked commands: %d', stats.totalCommands - stats.availableCommands))
-
-   if #stats.modelsets > 0 then
-      print('Modelsets: ' .. table.concat(stats.modelsets, ', '))
-   else
-      print('Modelsets: none (universal compatibility)')
    end
 end
 
