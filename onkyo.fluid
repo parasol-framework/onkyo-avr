@@ -139,7 +139,7 @@ local function doPing()
 
    print('Ping successful!')
    if connection.lastResponse then
-      print('Response: ' .. connection.lastResponse.command)
+      print('Response: ' .. connection.lastResponse.message())
    end
 end
 
@@ -170,7 +170,7 @@ local function doPowerControl(Action)
       print('Power command sent successfully!')
       local response = connection.lastResponse
       if response then
-         print('Response: ' .. response.command)
+         print('Response: ' .. response.message())
       end
    else
       print('Power command failed')
@@ -181,7 +181,7 @@ end
 
 local function doGetInfo()
    -- Requests device information and displays available commands
-   
+
    -- Get discovery data first (for fallback)
    local discoveryData = nil
    if not glConfig.host then
@@ -191,64 +191,64 @@ local function doGetInfo()
          glConfig.host = receiver.ip
       end
    end
-   
+
    local connection = doConnect()
-   
+
    print('Requesting device information...')
-   
+
    -- Get device information (with discovery fallback)
    connection:getDeviceInfo(discoveryData)  -- Sends NRIQSTN and parses response
-   
+
    if not connection:isDeviceDetected() then
       print('Warning: Could not detect device model. Showing universal commands.')
       print('')
       if connection.lastResponse then
-         print('Raw response: ' .. connection.lastResponse.command)
+         print('Response: ' .. connection.lastResponse.message())
          print('')
       end
    end
-   
+
    -- Display device information
    if connection.deviceInfo then
       local zones = {'main'} -- TODO: detect actual zones from device
       display.showDeviceInfo(connection.deviceInfo, connection.deviceModelsets, zones)
    end
-   
+
    -- Display available commands
    local verbose = arg('info') == 'verbose'
    local model = connection.deviceModel or 'unknown'
-   
+
    display.showAvailableCommands(model, 'main', verbose)
-   
+
    connection:disconnect()
    return true
 end
 
 ----------------------------------------------------------------------------------------------------------------------
 -- Parse and send custom command (raw ISCP or friendly format)
-   
+
 local function doSendCommand(commandStr)
    if not commandStr or commandStr == '' then
       print('Error: No command specified')
       return
    end
-   
+
    local connection = doConnect()
-   
+
    print('Sending command: ' .. commandStr)
-   
+
    local ex = catch(function()
        connection:sendCommand(commandStr:upper())
    end)
-     
+
    if ex then
       print('Error sending command: ' .. ex.message)
    else
       if connection.lastResponse then
-         print('Response: ' .. connection.lastResponse.command)
+         print('Response: ' .. connection.lastResponse.message())
       end
    end
-   
+
    connection:disconnect()
 end
 

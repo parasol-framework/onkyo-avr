@@ -88,9 +88,9 @@ function display.formatCommandValue(valueCode, valueData, verbose)
    if not valueData then
       return valueCode
    end
-   
+
    local result = valueCode
-   
+
    if valueData.name then
       if type(valueData.name) == 'table' then
          -- Multiple names/aliases
@@ -99,11 +99,11 @@ function display.formatCommandValue(valueCode, valueData, verbose)
          result = result .. ' (' .. valueData.name .. ')'
       end
    end
-   
+
    if verbose and valueData.description then
       result = result .. ' - ' .. valueData.description
    end
-   
+
    return result
 end
 
@@ -112,9 +112,9 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
    if not cmdData then
       return {}
    end
-   
+
    local lines = {}
-   
+
    -- Command header
    local header = string.format('  %s', cmdCode)
    if cmdData.name then
@@ -124,26 +124,26 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
       header = header .. ' - ' .. cmdData.description
    end
    table.insert(lines, header)
-   
+
    -- Filter values for this device
    local filteredValues = capabilities.filterCommandValues(cmdData, deviceModelsets)
    local valueCount = 0
    for _ in pairs(filteredValues) do valueCount = valueCount + 1 end
-   
+
    if verbose and valueCount > 0 then
       -- Show individual values
       local sortedValues = {}
       for valueCode, valueData in pairs(filteredValues) do
          table.insert(sortedValues, {code = valueCode, data = valueData})
       end
-      
+
       -- Sort values - put QSTN (query) first if it exists
       table.sort(sortedValues, function(a, b)
          if a.code == 'QSTN' then return true end
          if b.code == 'QSTN' then return false end
          return tostring(a.code) < tostring(b.code)
       end)
-      
+
       -- Limit displayed values to prevent overwhelming output
       local maxValues = 8
       local displayed = 0
@@ -152,7 +152,7 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
             table.insert(lines, string.format('    ... and %d more values', valueCount - displayed))
             break
          end
-         
+
          local valueStr = display.formatCommandValue(value.code, value.data, false)
          table.insert(lines, '    ' .. valueStr)
          displayed = displayed + 1
@@ -163,7 +163,7 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
    else
       table.insert(lines, '    (No values available for this device)')
    end
-   
+
    return lines
 end
 
@@ -173,29 +173,29 @@ end
 -- Display device information
 function display.showDeviceInfo(deviceInfo, modelsets, zones)
    print('=== DEVICE INFORMATION ===')
-   
+
    if deviceInfo.model then
       print('Model: ' .. deviceInfo.model)
    end
-   
+
    if deviceInfo.firmware then
       print('Firmware: v' .. deviceInfo.firmware)
    end
-   
+
    if deviceInfo.mac then
       print('MAC Address: ' .. deviceInfo.mac)
    end
-   
+
    if zones and #zones > 0 then
       print('Zones: ' .. table.concat(zones, ', '))
    end
-   
+
    if modelsets and #modelsets > 0 then
       print('Modelsets: ' .. table.concat(modelsets, ', '))
    else
       print('Modelsets: none (universal compatibility)')
    end
-   
+
    print('')
 end
 
@@ -203,26 +203,26 @@ end
 function display.showAvailableCommands(model, zone, verbose)
    zone = zone or 'main'
    verbose = verbose or false
-   
+
    local availableCommands = capabilities.getAvailableCommands(model, zone)
    local modelsets = capabilities.findModelsets(model)
    local stats = capabilities.getCommandStats(model, zone)
-   
+
    if not next(availableCommands) then
       print('No commands available for model: ' .. (model or 'unknown'))
       return
    end
-   
+
    print('=== AVAILABLE COMMANDS ===')
    if zone != 'main' then
       print('Zone: ' .. zone)
    end
    print('')
-   
+
    -- Group commands by category
    local categorized = {}
    local uncategorized = {}
-   
+
    for cmdCode, cmdData in pairs(availableCommands) do
       local categoryKey, category = getCommandCategory(cmdCode)
       if not categorized[categoryKey] then
@@ -234,31 +234,31 @@ function display.showAvailableCommands(model, zone, verbose)
       end
       categorized[categoryKey].commands[cmdCode] = cmdData
    end
-   
+
    -- Sort categories for consistent display
    local sortedCategories = {}
    local categoryOrder = {'power', 'volume', 'input', 'listening', 'speaker', 'tone', 'video', 'network', 'trigger', 'audyssey', 'info', 'other'}
-   
+
    for _, categoryKey in ipairs(categoryOrder) do
       if categorized[categoryKey] then
          table.insert(sortedCategories, {key = categoryKey, data = categorized[categoryKey]})
       end
    end
-   
+
    -- Display each category
    for _, category in ipairs(sortedCategories) do
       print(category.data.name)
       if verbose then
          print('  ' .. category.data.description)
       end
-      
+
       -- Sort commands within category
       local sortedCommands = {}
       for cmdCode, cmdData in pairs(category.data.commands) do
          table.insert(sortedCommands, {code = cmdCode, data = cmdData})
       end
       table.sort(sortedCommands, function(a, b) return a.code < b.code end)
-      
+
       -- Display commands in this category
       for _, command in ipairs(sortedCommands) do
          local lines = display.formatCommand(command.code, command.data, verbose, modelsets)
@@ -268,7 +268,7 @@ function display.showAvailableCommands(model, zone, verbose)
       end
       print('')
    end
-   
+
    -- Display statistics
    if stats then
       print('=== SUMMARY ===')
@@ -284,13 +284,13 @@ end
 -- Display command statistics for a model
 function display.showCommandStats(model, zone)
    zone = zone or 'main'
-   
+
    local stats = capabilities.getCommandStats(model, zone)
    if not stats then
       print('No statistics available')
       return
    end
-   
+
    print('=== COMMAND STATISTICS ===')
    print('Model: ' .. (model or 'unknown'))
    print('Zone: ' .. zone)
@@ -300,7 +300,7 @@ function display.showCommandStats(model, zone)
    print(string.format('Universal commands: %d', stats.universalCommands))
    print(string.format('Model-specific commands: %d', stats.restrictedCommands))
    print(string.format('Blocked commands: %d', stats.totalCommands - stats.availableCommands))
-   
+
    if #stats.modelsets > 0 then
       print('Modelsets: ' .. table.concat(stats.modelsets, ', '))
    else

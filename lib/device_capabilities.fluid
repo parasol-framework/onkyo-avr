@@ -15,18 +15,19 @@ function capabilities.parseDeviceInfo(response)
    if not response or not response.command then
       return nil, 'No response data'
    end
-   
-   local info = {
-      model = nil,
-      firmware = nil,
-      mac = nil,
-      raw = response.command
-   }
-   
-   print(response.command)
 
-   info.xml = obj.new('xml', { statement=response.command })
-      
+   local info = { }
+
+   msg('Parsing device info from response: ' .. response.command())
+
+   info.xml = obj.new('xml', { statement=response.message() })
+   info.model    = nz(info.xml.getKey('/response/device/model'), nil)
+   info.firmware = nz(info.xml.getKey('/response/device/firmwareversion'), nil)
+   info.mac      = nz(info.xml.getKey('/response/device/macaddress'), nil)
+   info.year     = nz(info.xml.getKey('/response/device/year'), nil)
+   info.category = nz(info.xml.getKey('/response/device/category'), nil)
+   info.serial   = nz(info.xml.getKey('/response/device/deviceserial'), nil)
+   print('"' .. nz(info.model,'NIL') .. '"')
    return info
 end
 
@@ -36,7 +37,7 @@ function capabilities.createDeviceInfoFromDiscovery(discoveryData)
    if not discoveryData then
       return nil, 'No discovery data provided'
    end
-   
+
    local info = {
       model    = discoveryData.model,
       firmware = nil, -- Not available from discovery
@@ -45,21 +46,22 @@ function capabilities.createDeviceInfoFromDiscovery(discoveryData)
       port     = discoveryData.port,
       raw      =  discoveryData.raw or 'From discovery'
    }
-   
+
    return info
 end
 
 ----------------------------------------------------------------------------------------------------------------------
--- Modelset detection
-
 -- Find which modelsets contain the specified device model
+
 function capabilities.findModelsets(model)
    if not model or not cmd.modelsets then
       return {}
    end
-   
+
+   msg('Detecting modelsets for device model: ' .. model)
+
    local modelsets = {}
-   
+
    for setName, models in pairs(cmd.modelsets) do
       for _, deviceModel in ipairs(models) do
          if deviceModel == model then
@@ -70,18 +72,20 @@ function capabilities.findModelsets(model)
    end
 
    if #modelsets == 0 then
-      for _, deviceModel in ipairs(models) do
-         -- Partial match: device model might be base name of a variant
-         -- e.g., "TX-NR676E" should match "TX-NR676E(Ether)"
-         if deviceModel:match('^' .. model:gsub('%-', '%%-') .. '%(') then
-            table.insert(modelsets, setName)
-            break
-         end
-         -- Reverse partial match: modelset might have base name
-         -- e.g., "TX-NR676E(Ether)" device should match "TX-NR676E" modelset entry
-         if model:match('^' .. deviceModel:gsub('%-', '%%-'):gsub('%(', '%%%('):gsub('%)', '%%%)') .. '%(') then
-            table.insert(modelsets, setName)
-            break
+      for setName, models in pairs(cmd.modelsets) do
+         for _, deviceModel in ipairs(models) do
+            -- Partial match: device model might be base name of a variant
+            -- e.g., "TX-NR676E" should match "TX-NR676E(Ether)"
+            if deviceModel:match('^' .. model:gsub('%-', '%%-') .. '%(') then
+               table.insert(modelsets, setName)
+               break
+            end
+            -- Reverse partial match: modelset might have base name
+            -- e.g., "TX-NR676E(Ether)" device should match "TX-NR676E" modelset entry
+            if model:match('^' .. deviceModel:gsub('%-', '%%-'):gsub('%(', '%%%('):gsub('%)', '%%%)') .. '%(') then
+               table.insert(modelsets, setName)
+               break
+            end
          end
       end
    end
@@ -90,17 +94,18 @@ function capabilities.findModelsets(model)
 end
 
 -- Check if a model belongs to a specific modelset
+
 function capabilities.isModelInSet(model, setName)
    if not model or not setName or not cmd.modelsets or not cmd.modelsets[setName] then
       return false
    end
-   
+
    for _, deviceModel in ipairs(cmd.modelsets[setName]) do
       if deviceModel == model then
          return true
       end
    end
-   
+
    return false
 end
 
@@ -113,12 +118,12 @@ function capabilities.filterCommandValues(command, deviceModelsets)
    if not command or not command.values then
       return {}
    end
-   
+
    local filtered = {}
-   
+
    for valueCode, valueData in pairs(command.values) do
       local include = false
-      
+
       if not valueData.models then
          -- No model restriction, available to all devices
          include = true
@@ -131,30 +136,33 @@ function capabilities.filterCommandValues(command, deviceModelsets)
             end
          end
       end
-      
+
       if include then
          filtered[valueCode] = valueData
       end
    end
-   
+
    return filtered
 end
 
 -- Get available commands for a device model in a specific zone
+
 function capabilities.getAvailableCommands(model, zone)
+   if not model then error('No device model specified') end
+
    zone = zone or 'main'
-   
+
    if not cmd.commands or not cmd.commands[zone] then
       return {}, 'Invalid zone: ' .. zone
    end
-   
+
    local modelsets = capabilities.findModelsets(model)
    local availableCommands = {}
-   
+
    for cmdCode, cmdData in pairs(cmd.commands[zone]) do
       -- Filter the command values for this device
       local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
-      
+
       -- Only include the command if it has at least one available value
       if next(filteredValues) then
          availableCommands[cmdCode] = {
@@ -164,18 +172,18 @@ function capabilities.getAvailableCommands(model, zone)
          }
       end
    end
-   
+
    return availableCommands
 end
 
 -- Get statistics about command availability for a device model
 function capabilities.getCommandStats(model, zone)
    zone = zone or 'main'
-   
+
    if not cmd.commands or not cmd.commands[zone] then
       return nil, 'Invalid zone: ' .. zone
    end
-   
+
    local modelsets = capabilities.findModelsets(model)
    local stats = {
       totalCommands = 0,
@@ -184,13 +192,13 @@ function capabilities.getCommandStats(model, zone)
       restrictedCommands = 0,
       modelsets = modelsets
    }
-   
+
    for cmdCode, cmdData in pairs(cmd.commands[zone]) do
       stats.totalCommands = stats.totalCommands + 1
-      
+
       local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
       local hasRestrictedValues = false
-      
+
       -- Check if command has any model-restricted values
       for _, valueData in pairs(cmdData.values or {}) do
          if valueData.models then
@@ -198,7 +206,7 @@ function capabilities.getCommandStats(model, zone)
             break
          end
       end
-      
+
       if next(filteredValues) then
          stats.availableCommands = stats.availableCommands + 1
          if hasRestrictedValues then
@@ -208,7 +216,7 @@ function capabilities.getCommandStats(model, zone)
          end
       end
    end
-   
+
    return stats
 end
 
@@ -220,12 +228,12 @@ function capabilities.getAvailableZones()
    if not cmd.commands then
       return {}
    end
-   
+
    local zones = {}
    for zone, _ in pairs(cmd.commands) do
       table.insert(zones, zone)
    end
-   
+
    table.sort(zones)
    return zones
 end
@@ -235,12 +243,12 @@ function capabilities.getModelsetSummary()
    if not cmd.modelsets then
       return {}
    end
-   
+
    local summary = {}
    for setName, models in pairs(cmd.modelsets) do
       summary[setName] = #models
    end
-   
+
    return summary
 end
 

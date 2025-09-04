@@ -23,15 +23,15 @@ local function getNetworkInterfaces()
    return interfaces
 end
 
-local function parseDeviceInfo(response)
+local function parseDeviceInfo(Response)
    -- Parse response format from discovery
    -- Can be: !1ECNTX-NR609/60128/DX/001122334455 or ECNTX-NR609/60128/DX/001122334455
-   if not response or #response < 10 then
+   if not Response or #Response < 10 then
       return nil
    end
 
    -- Handle both formats: with or without !1ECN prefix
-   local data = response:match('^!1ECN(.+)$') or response:match('^ECN(.+)$')
+   local data = Response:match('^!1ECN(.+)$') or Response:match('^ECN(.+)$')
    if not data then
       return nil
    end
@@ -56,7 +56,7 @@ local function parseDeviceInfo(response)
       port  = tonumber(parts[2]),
       area  = parts[3],
       mac   = parts[4],
-      raw   = response
+      raw   = Response
    }
 end
 
@@ -121,11 +121,11 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
                      byteArray[i] = string.byte(buffer, i)
                   end
 
-                  local response, parseErr = eiscp.parseEISCPResponse(byteArray, bytesRead)
+                  local response = eiscp.parseEISCPResponse(byteArray, bytesRead)
                   if response then
-                     msg('ISCP Message: ' .. response.command)
+                     msg('ISCP Message: ' .. response.data)
 
-                     local deviceInfo = parseDeviceInfo(response.command)
+                     local deviceInfo = parseDeviceInfo(response.data)
                      if deviceInfo then
                         deviceInfo.ip = senderIP
                         deviceInfo.discovered_port = senderPort
