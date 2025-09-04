@@ -1,0 +1,311 @@
+--[[
+Command display formatting for Onkyo eISCP devices
+Handles organization and presentation of device commands
+--]]
+
+local capabilities = require('./lib/device_capabilities')
+local display = {}
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command categorization
+
+-- Define command categories for better organization
+local COMMAND_CATEGORIES = {
+   power = {
+      name = 'POWER & SYSTEM',
+      commands = {'PWR', 'SLP', 'DIM', 'OSD', 'MEM', 'RST'},
+      description = 'Power control, sleep timer, display settings'
+   },
+   volume = {
+      name = 'VOLUME & AUDIO',
+      commands = {'MVL', 'AMT', 'CMT', 'SWL', 'SW2', 'CTL', 'TCL'},
+      description = 'Volume, muting, subwoofer, and level controls'
+   },
+   tone = {
+      name = 'TONE CONTROLS',
+      commands = {'TFR', 'TFW', 'TFH', 'TCT', 'TSR', 'TSB', 'TSW', 'PMB'},
+      description = 'Bass, treble, and tone adjustments'
+   },
+   input = {
+      name = 'INPUT SELECTION',
+      commands = {'SLI', 'SLR', 'SLA'},
+      description = 'Source selection and audio input routing'
+   },
+   listening = {
+      name = 'LISTENING MODES',
+      commands = {'LMD'},
+      description = 'Surround sound and audio processing modes'
+   },
+   speaker = {
+      name = 'SPEAKER SETUP',
+      commands = {'SPA', 'SPB', 'SPL', 'SLC', 'SPD'},
+      description = 'Speaker configuration and calibration'
+   },
+   video = {
+      name = 'VIDEO & HDMI',
+      commands = {'VOS', 'HDO', 'HAO', 'HAS', 'CEC', 'CCM', 'RES', 'SPR', 'HOI', 'ISF', 'VWM', 'VPM'},
+      description = 'Video output, HDMI, and display settings'
+   },
+   trigger = {
+      name = '12V TRIGGERS',
+      commands = {'TGA', 'TGB', 'TGC'},
+      description = '12V trigger outputs for external equipment'
+   },
+   info = {
+      name = 'INFORMATION',
+      commands = {'IFA', 'IFV', 'FLD', 'DIF'},
+      description = 'Audio/video information and display data'
+   },
+   network = {
+      name = 'NETWORK & STREAMING',
+      commands = {'NTC', 'NTM', 'NTR', 'NST', 'NMS', 'NTS', 'NPR', 'NDS', 'NLS', 'NLA', 'NJA', 'NSV', 'NKY', 'NPU', 'NLT', 'NMD', 'NSB', 'NRI', 'NLU', 'NPB', 'NAF', 'NRF', 'NSD'},
+      description = 'Network, streaming, and media controls'
+   },
+   audyssey = {
+      name = 'AUDYSSEY & DSP',
+      commands = {'ADQ', 'ADV', 'DVL', 'LDM'},
+      description = 'Audyssey processing and dynamic audio'
+   }
+}
+
+-- Get category for a command
+local function getCommandCategory(cmdCode)
+   for categoryKey, category in pairs(COMMAND_CATEGORIES) do
+      for _, cmd in ipairs(category.commands) do
+         if cmd == cmdCode then
+            return categoryKey, category
+         end
+      end
+   end
+   return 'other', {name = 'OTHER', description = 'Miscellaneous commands'}
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Display formatting
+
+-- Format a single command value for display
+function display.formatCommandValue(valueCode, valueData, verbose)
+   if not valueData then
+      return valueCode
+   end
+   
+   local result = valueCode
+   
+   if valueData.name then
+      if type(valueData.name) == 'table' then
+         -- Multiple names/aliases
+         result = result .. ' (' .. table.concat(valueData.name, '/') .. ')'
+      else
+         result = result .. ' (' .. valueData.name .. ')'
+      end
+   end
+   
+   if verbose and valueData.description then
+      result = result .. ' - ' .. valueData.description
+   end
+   
+   return result
+end
+
+-- Format a single command for display
+function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
+   if not cmdData then
+      return {}
+   end
+   
+   local lines = {}
+   
+   -- Command header
+   local header = string.format('  %s', cmdCode)
+   if cmdData.name then
+      header = header .. string.format(' (%s)', cmdData.name)
+   end
+   if cmdData.description then
+      header = header .. ' - ' .. cmdData.description
+   end
+   table.insert(lines, header)
+   
+   -- Filter values for this device
+   local filteredValues = capabilities.filterCommandValues(cmdData, deviceModelsets)
+   local valueCount = 0
+   for _ in pairs(filteredValues) do valueCount = valueCount + 1 end
+   
+   if verbose and valueCount > 0 then
+      -- Show individual values
+      local sortedValues = {}
+      for valueCode, valueData in pairs(filteredValues) do
+         table.insert(sortedValues, {code = valueCode, data = valueData})
+      end
+      
+      -- Sort values - put QSTN (query) first if it exists
+      table.sort(sortedValues, function(a, b)
+         if a.code == 'QSTN' then return true end
+         if b.code == 'QSTN' then return false end
+         return tostring(a.code) < tostring(b.code)
+      end)
+      
+      -- Limit displayed values to prevent overwhelming output
+      local maxValues = 8
+      local displayed = 0
+      for _, value in ipairs(sortedValues) do
+         if displayed >= maxValues then
+            table.insert(lines, string.format('    ... and %d more values', valueCount - displayed))
+            break
+         end
+         
+         local valueStr = display.formatCommandValue(value.code, value.data, false)
+         table.insert(lines, '    ' .. valueStr)
+         displayed = displayed + 1
+      end
+   elseif valueCount > 0 then
+      -- Just show value count
+      table.insert(lines, string.format('    (%d values available)', valueCount))
+   else
+      table.insert(lines, '    (No values available for this device)')
+   end
+   
+   return lines
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Main display functions
+
+-- Display device information
+function display.showDeviceInfo(deviceInfo, modelsets, zones)
+   print('=== DEVICE INFORMATION ===')
+   
+   if deviceInfo.model then
+      print('Model: ' .. deviceInfo.model)
+   end
+   
+   if deviceInfo.firmware then
+      print('Firmware: v' .. deviceInfo.firmware)
+   end
+   
+   if deviceInfo.mac then
+      print('MAC Address: ' .. deviceInfo.mac)
+   end
+   
+   if zones and #zones > 0 then
+      print('Zones: ' .. table.concat(zones, ', '))
+   end
+   
+   if modelsets and #modelsets > 0 then
+      print('Modelsets: ' .. table.concat(modelsets, ', '))
+   else
+      print('Modelsets: none (universal compatibility)')
+   end
+   
+   print('')
+end
+
+-- Display available commands organized by category
+function display.showAvailableCommands(model, zone, verbose)
+   zone = zone or 'main'
+   verbose = verbose or false
+   
+   local availableCommands = capabilities.getAvailableCommands(model, zone)
+   local modelsets = capabilities.findModelsets(model)
+   local stats = capabilities.getCommandStats(model, zone)
+   
+   if not next(availableCommands) then
+      print('No commands available for model: ' .. (model or 'unknown'))
+      return
+   end
+   
+   print('=== AVAILABLE COMMANDS ===')
+   if zone != 'main' then
+      print('Zone: ' .. zone)
+   end
+   print('')
+   
+   -- Group commands by category
+   local categorized = {}
+   local uncategorized = {}
+   
+   for cmdCode, cmdData in pairs(availableCommands) do
+      local categoryKey, category = getCommandCategory(cmdCode)
+      if not categorized[categoryKey] then
+         categorized[categoryKey] = {
+            name = category.name,
+            description = category.description,
+            commands = {}
+         }
+      end
+      categorized[categoryKey].commands[cmdCode] = cmdData
+   end
+   
+   -- Sort categories for consistent display
+   local sortedCategories = {}
+   local categoryOrder = {'power', 'volume', 'input', 'listening', 'speaker', 'tone', 'video', 'network', 'trigger', 'audyssey', 'info', 'other'}
+   
+   for _, categoryKey in ipairs(categoryOrder) do
+      if categorized[categoryKey] then
+         table.insert(sortedCategories, {key = categoryKey, data = categorized[categoryKey]})
+      end
+   end
+   
+   -- Display each category
+   for _, category in ipairs(sortedCategories) do
+      print(category.data.name)
+      if verbose then
+         print('  ' .. category.data.description)
+      end
+      
+      -- Sort commands within category
+      local sortedCommands = {}
+      for cmdCode, cmdData in pairs(category.data.commands) do
+         table.insert(sortedCommands, {code = cmdCode, data = cmdData})
+      end
+      table.sort(sortedCommands, function(a, b) return a.code < b.code end)
+      
+      -- Display commands in this category
+      for _, command in ipairs(sortedCommands) do
+         local lines = display.formatCommand(command.code, command.data, verbose, modelsets)
+         for _, line in ipairs(lines) do
+            print(line)
+         end
+      end
+      print('')
+   end
+   
+   -- Display statistics
+   if stats then
+      print('=== SUMMARY ===')
+      print(string.format('Total commands available: %d/%d', stats.availableCommands, stats.totalCommands))
+      print(string.format('Universal commands: %d', stats.universalCommands))
+      print(string.format('Model-specific commands: %d', stats.restrictedCommands))
+      if not verbose then
+         print('\n[Use verbose=true to see all command values and descriptions]')
+      end
+   end
+end
+
+-- Display command statistics for a model
+function display.showCommandStats(model, zone)
+   zone = zone or 'main'
+   
+   local stats = capabilities.getCommandStats(model, zone)
+   if not stats then
+      print('No statistics available')
+      return
+   end
+   
+   print('=== COMMAND STATISTICS ===')
+   print('Model: ' .. (model or 'unknown'))
+   print('Zone: ' .. zone)
+   print('')
+   print(string.format('Total commands: %d', stats.totalCommands))
+   print(string.format('Available commands: %d', stats.availableCommands))
+   print(string.format('Universal commands: %d', stats.universalCommands))
+   print(string.format('Model-specific commands: %d', stats.restrictedCommands))
+   print(string.format('Blocked commands: %d', stats.totalCommands - stats.availableCommands))
+   
+   if #stats.modelsets > 0 then
+      print('Modelsets: ' .. table.concat(stats.modelsets, ', '))
+   else
+      print('Modelsets: none (universal compatibility)')
+   end
+end
+
+return display

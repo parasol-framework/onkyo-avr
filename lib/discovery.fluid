@@ -2,10 +2,7 @@
 
     include 'network'
     if not mNet then mNet = mod.load('network') end
-
-    local glSelf = obj.find('self')
-    local glPath = glSelf.workingPath
-    local eiscp = loadFile(glPath .. 'lib/eiscp.fluid')
+    local eiscp = require('./lib/eiscp')
 
     local discovery = {}
 
@@ -96,13 +93,13 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
    local source = struct.new('IPAddress')
    local totalSent = 0
    local interfaces = getNetworkInterfaces()
-   
+
    for _, interface in ipairs(interfaces) do
       msg('Using interface ' .. interface.addr .. ' -> broadcast ' .. interface.broadcast)
-      
+
       for _, packetStr in ipairs(packetStrs) do
          -- Create socket that can both send and receive (like Python version)
-         local socket = obj.new('netsocket', { 
+         local socket = obj.new('netsocket', {
             flags = 'UDP|BROADCAST',
             incoming = function(Socket)
                local err, bytesRead = Socket.mtRecvFrom(source, buffer)
@@ -113,7 +110,7 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
                   msg('Received ' .. bytesRead .. ' bytes from ' .. senderIP .. ':' .. senderPort)
 
                   -- Skip echo packets from our own machine
-                  if senderIP == interface.addr or string.find(senderIP, '192.168.178.44') then
+                  if senderIP == interface.addr then
                      msg('Skipping echo packet from our own interface')
                      return
                   end
@@ -162,14 +159,14 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
                end
             end
          })
-         
+
          if socket then
             -- Send to broadcast address
             local dest = struct.new('IPAddress')
             local addrErr = mNet.StrToAddress(interface.broadcast, dest)
             if addrErr == ERR_Okay then
                dest.port = DISCOVERY_PORT
-               
+
                local err, bytesSent = socket.mtSendTo(dest, packetStr)
                if err == ERR_Okay then
                   totalSent = totalSent + 1

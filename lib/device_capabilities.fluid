@@ -1,0 +1,247 @@
+--[[
+Device capabilities mapping for Onkyo eISCP devices
+Handles model detection, modelset mapping, and command filtering
+--]]
+
+local cmd = require('./lib/eiscp-commands')
+local capabilities = {}
+
+----------------------------------------------------------------------------------------------------------------------
+-- Device information parsing
+
+-- Parse NRIQSTN XML response to extract device information
+
+function capabilities.parseDeviceInfo(response)
+   if not response or not response.command then
+      return nil, 'No response data'
+   end
+   
+   local info = {
+      model = nil,
+      firmware = nil,
+      mac = nil,
+      raw = response.command
+   }
+   
+   print(response.command)
+
+   info.xml = obj.new('xml', { statement=response.command })
+      
+   return info
+end
+
+-- Create device info from discovery data (fallback when NRIIQSTN fails)
+
+function capabilities.createDeviceInfoFromDiscovery(discoveryData)
+   if not discoveryData then
+      return nil, 'No discovery data provided'
+   end
+   
+   local info = {
+      model    = discoveryData.model,
+      firmware = nil, -- Not available from discovery
+      mac      = discoveryData.mac,
+      ip       = discoveryData.ip,
+      port     = discoveryData.port,
+      raw      =  discoveryData.raw or 'From discovery'
+   }
+   
+   return info
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Modelset detection
+
+-- Find which modelsets contain the specified device model
+function capabilities.findModelsets(model)
+   if not model or not cmd.modelsets then
+      return {}
+   end
+   
+   local modelsets = {}
+   
+   for setName, models in pairs(cmd.modelsets) do
+      for _, deviceModel in ipairs(models) do
+         if deviceModel == model then
+            table.insert(modelsets, setName)
+            break
+         end
+      end
+   end
+
+   if #modelsets == 0 then
+      for _, deviceModel in ipairs(models) do
+         -- Partial match: device model might be base name of a variant
+         -- e.g., "TX-NR676E" should match "TX-NR676E(Ether)"
+         if deviceModel:match('^' .. model:gsub('%-', '%%-') .. '%(') then
+            table.insert(modelsets, setName)
+            break
+         end
+         -- Reverse partial match: modelset might have base name
+         -- e.g., "TX-NR676E(Ether)" device should match "TX-NR676E" modelset entry
+         if model:match('^' .. deviceModel:gsub('%-', '%%-'):gsub('%(', '%%%('):gsub('%)', '%%%)') .. '%(') then
+            table.insert(modelsets, setName)
+            break
+         end
+      end
+   end
+
+   return modelsets
+end
+
+-- Check if a model belongs to a specific modelset
+function capabilities.isModelInSet(model, setName)
+   if not model or not setName or not cmd.modelsets or not cmd.modelsets[setName] then
+      return false
+   end
+   
+   for _, deviceModel in ipairs(cmd.modelsets[setName]) do
+      if deviceModel == model then
+         return true
+      end
+   end
+   
+   return false
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command filtering
+
+-- Filter command values based on device modelsets
+-- Returns only the values that are available for the specified modelsets
+function capabilities.filterCommandValues(command, deviceModelsets)
+   if not command or not command.values then
+      return {}
+   end
+   
+   local filtered = {}
+   
+   for valueCode, valueData in pairs(command.values) do
+      local include = false
+      
+      if not valueData.models then
+         -- No model restriction, available to all devices
+         include = true
+      else
+         -- Check if any of the device's modelsets match this value's requirement
+         for _, modelset in ipairs(deviceModelsets or {}) do
+            if valueData.models == modelset then
+               include = true
+               break
+            end
+         end
+      end
+      
+      if include then
+         filtered[valueCode] = valueData
+      end
+   end
+   
+   return filtered
+end
+
+-- Get available commands for a device model in a specific zone
+function capabilities.getAvailableCommands(model, zone)
+   zone = zone or 'main'
+   
+   if not cmd.commands or not cmd.commands[zone] then
+      return {}, 'Invalid zone: ' .. zone
+   end
+   
+   local modelsets = capabilities.findModelsets(model)
+   local availableCommands = {}
+   
+   for cmdCode, cmdData in pairs(cmd.commands[zone]) do
+      -- Filter the command values for this device
+      local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
+      
+      -- Only include the command if it has at least one available value
+      if next(filteredValues) then
+         availableCommands[cmdCode] = {
+            name = cmdData.name,
+            description = cmdData.description,
+            values = filteredValues
+         }
+      end
+   end
+   
+   return availableCommands
+end
+
+-- Get statistics about command availability for a device model
+function capabilities.getCommandStats(model, zone)
+   zone = zone or 'main'
+   
+   if not cmd.commands or not cmd.commands[zone] then
+      return nil, 'Invalid zone: ' .. zone
+   end
+   
+   local modelsets = capabilities.findModelsets(model)
+   local stats = {
+      totalCommands = 0,
+      availableCommands = 0,
+      universalCommands = 0,
+      restrictedCommands = 0,
+      modelsets = modelsets
+   }
+   
+   for cmdCode, cmdData in pairs(cmd.commands[zone]) do
+      stats.totalCommands = stats.totalCommands + 1
+      
+      local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
+      local hasRestrictedValues = false
+      
+      -- Check if command has any model-restricted values
+      for _, valueData in pairs(cmdData.values or {}) do
+         if valueData.models then
+            hasRestrictedValues = true
+            break
+         end
+      end
+      
+      if next(filteredValues) then
+         stats.availableCommands = stats.availableCommands + 1
+         if hasRestrictedValues then
+            stats.restrictedCommands = stats.restrictedCommands + 1
+         else
+            stats.universalCommands = stats.universalCommands + 1
+         end
+      end
+   end
+   
+   return stats
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Utility functions
+
+-- Get list of all available zones for commands
+function capabilities.getAvailableZones()
+   if not cmd.commands then
+      return {}
+   end
+   
+   local zones = {}
+   for zone, _ in pairs(cmd.commands) do
+      table.insert(zones, zone)
+   end
+   
+   table.sort(zones)
+   return zones
+end
+
+-- Get summary of all modelsets
+function capabilities.getModelsetSummary()
+   if not cmd.modelsets then
+      return {}
+   end
+   
+   local summary = {}
+   for setName, models in pairs(cmd.modelsets) do
+      summary[setName] = #models
+   end
+   
+   return summary
+end
+
+return capabilities

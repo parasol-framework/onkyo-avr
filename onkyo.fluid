@@ -7,31 +7,40 @@ Usage: parasol.exe onkyo.fluid [parameter=value ...]
   discover=true     - Discover Onkyo receivers via UDP broadcast
   ping=true         - Test TCP connectivity with power status query
   power=on|off      - Send power control command (on or off)
-  info=true         - Request device information via NRIIQSTN command
+  info=true|verbose - Show device information and available commands
+  command=VALUE     - Send custom command (raw ISCP or friendly name)
   host=IP           - Target IP address (default: 192.168.178.40)
   port=NUMBER       - Target port (default: 60128)
   timeout=SECONDS   - Connection timeout in seconds (default: 5)
+  response-output=FILE - Log all responses to file in hex format
 
 For verbose logging add --log-api
 
-Examples:
+Command Examples:
+  parasol onkyo.fluid command=PWR01        - Raw ISCP power on
+  parasol onkyo.fluid command=MVL50        - Raw ISCP set volume to 50
+  parasol onkyo.fluid command=power=on     - Friendly command format
   parasol onkyo.fluid discover=true --log-api
   parasol onkyo.fluid host=192.168.178.50 ping=true
   parasol onkyo.fluid power=on timeout=10
-  parasol onkyo.fluid verbose=true info=true
+  parasol onkyo.fluid info=true verbose=true
 ]]
 
     local glSelf = obj.find('self')
     local glPath = glSelf.workingPath
-    local eiscp = loadFile(glPath .. 'lib/eiscp.fluid')
-    local discovery = loadFile(glPath .. 'lib/discovery.fluid')
+    local eiscp = require('./lib/eiscp')
+    local discovery = require('./lib/discovery')
+    local display = require('./lib/command_display')
 
-    -- Configuration with defaults
     local glConfig = {
        host = nil,
        port = 60128,
-       timeout = 5.0
+       timeout = 5.0,
+       responseOutputFile = nil
     }
+
+    -- Store connection instance
+    local glConnection = nil
 
 ----------------------------------------------------------------------------------------------------------------------
 -- Process command line arguments using key=value format (following http_server.fluid pattern)
@@ -53,6 +62,10 @@ Examples:
        glConfig.timeout = tonumber(arg('timeout')) or glConfig.timeout
     end
 
+    if arg('response-output') then
+       glConfig.responseOutputFile = arg('response-output')
+    end
+
 ----------------------------------------------------------------------------------------------------------------------
 -- Command implementations
 
@@ -69,10 +82,7 @@ local function doDiscovery()
    print('')
 
    local receivers = discovery.findReceivers(glConfig.timeout, glConfig.host, tonumber(arg('limit')))
-   if not receivers then
-      print('Discovery error: ' .. err)
-      return
-   end
+   if not receivers then return end
 
    if #receivers == 0 then
       print('No Onkyo receivers found on the network')
@@ -95,14 +105,12 @@ local function doDiscovery()
    end
 
    collectgarbage()
-   return true  -- Discovery always returns success (even if no receivers found)
 end
 
 ----------------------------------------------------------------------------------------------------------------------
+-- Establishes TCP connection to receiver on configured host:port
 
 local function doConnect()
-   -- Establishes TCP connection to receiver on configured host:port
-
    if not glConfig.host then
       local receiver = discovery.findReceiver(nil, glConfig.timeout)
       glConfig.host = receiver and receiver.ip or nil
@@ -111,42 +119,27 @@ local function doConnect()
    collectgarbage()
 
    if not glConfig.host then
-      print('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
-      return false
+      error('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
    end
 
    print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
 
-   local success, err = eiscp.connect(glConfig.host, glConfig.port, glConfig.timeout)
-   if not success then
-      print('Connection failed: ' .. (err or 'Unknown error'))
-      return false
-   end
-
-   print('Connected successfully!')
-   return true
+   glConnection = eiscp.connect(glConfig.host, glConfig.port, glConfig.timeout, glConfig.responseOutputFile)
+   return glConnection
 end
 
 ----------------------------------------------------------------------------------------------------------------------
+-- Tests connectivity by sending PWRQSTN command and waiting for response
 
 local function doPing()
-   -- Tests connectivity by sending PWRQSTN command and waiting for response
-   if not doConnect() then
-      return false
-   end
+   local connection = doConnect()
 
-   print('Testing connectivity...')
+   connection:ping()  -- Sends PWRQSTN (power status query)
+   connection:disconnect()
 
-   local response, err = eiscp.ping()  -- Sends PWRQSTN (power status query)
-   eiscp.disconnect()
-
-   if response then
-      print('Ping successful!')
-      print('Response: ' .. response.command)
-      return true
-   else
-      print('Ping failed: ' .. (err or 'No response'))
-      return false
+   print('Ping successful!')
+   if connection.lastResponse then
+      print('Response: ' .. connection.lastResponse.command)
    end
 end
 
@@ -157,81 +150,134 @@ local function doPowerControl(Action)
    local action = Action:lower()
    if (action != 'on') and (action != 'off') then
       print('Error: Invalid power action "' .. nz(Action,'NIL') .. '". Use "on" or "off".')
-      return false
+      return
    end
 
-   if not doConnect() then
-      return false
-   end
+   local connection = doConnect()
 
    print('Setting power ' .. action .. '...')
 
-   local response, err
+   local success = false
    if action == 'on' then
-      response, err = eiscp.powerOn()
+      success = pcall(function() connection:powerOn() end)
    else
-      response, err = eiscp.powerOff()
+      success = pcall(function() connection:powerOff() end)
    end
 
-   eiscp.disconnect()
+   connection:disconnect()
 
-   if response then
+   if success then
       print('Power command sent successfully!')
-      print('Response: ' .. response.command)
-      return true
+      local response = connection.lastResponse
+      if response then
+         print('Response: ' .. response.command)
+      end
    else
-      print('Power command failed: ' .. (err or 'No response'))
-      return false
+      print('Power command failed')
    end
 end
 
 ----------------------------------------------------------------------------------------------------------------------
 
 local function doGetInfo()
-   -- Requests device information using NRIIQSTN command
-   if not doConnect() then
-      return false
+   -- Requests device information and displays available commands
+   
+   -- Get discovery data first (for fallback)
+   local discoveryData = nil
+   if not glConfig.host then
+      local receiver = discovery.findReceiver(nil, glConfig.timeout)
+      if receiver then
+         discoveryData = receiver
+         glConfig.host = receiver.ip
+      end
    end
-
+   
+   local connection = doConnect()
+   
    print('Requesting device information...')
-
-   local response, err = eiscp.getDeviceInfo()  -- Sends NRIIQSTN
-   eiscp.disconnect()
-
-   if response then
-      print('Device information received!')
-      print('Response: ' .. response.command)
-      return true
-   else
-      print('Info request failed: ' .. (err or 'No response'))
-      return false
+   
+   -- Get device information (with discovery fallback)
+   connection:getDeviceInfo(discoveryData)  -- Sends NRIQSTN and parses response
+   
+   if not connection:isDeviceDetected() then
+      print('Warning: Could not detect device model. Showing universal commands.')
+      print('')
+      if connection.lastResponse then
+         print('Raw response: ' .. connection.lastResponse.command)
+         print('')
+      end
    end
+   
+   -- Display device information
+   if connection.deviceInfo then
+      local zones = {'main'} -- TODO: detect actual zones from device
+      display.showDeviceInfo(connection.deviceInfo, connection.deviceModelsets, zones)
+   end
+   
+   -- Display available commands
+   local verbose = arg('info') == 'verbose'
+   local model = connection.deviceModel or 'unknown'
+   
+   display.showAvailableCommands(model, 'main', verbose)
+   
+   connection:disconnect()
+   return true
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Parse and send custom command (raw ISCP or friendly format)
+   
+local function doSendCommand(commandStr)
+   if not commandStr or commandStr == '' then
+      print('Error: No command specified')
+      return
+   end
+   
+   local connection = doConnect()
+   
+   print('Sending command: ' .. commandStr)
+   
+   local ex = catch(function()
+       connection:sendCommand(commandStr:upper())
+   end)
+     
+   if ex then
+      print('Error sending command: ' .. ex.message)
+   else
+      if connection.lastResponse then
+         print('Response: ' .. connection.lastResponse.command)
+      end
+   end
+   
+   connection:disconnect()
 end
 
 ----------------------------------------------------------------------------------------------------------------------
 
-    print('Onkyo AV Remote')
-    print('')
+   print('Onkyo AV Remote')
+   print('')
 
-    -- Execute commands based on named arguments (only one command allowed per execution)
+   -- Execute commands based on named arguments (only one command allowed per execution)
 
-    local commandExecuted = false
-    local success = false
+   local commandExecuted = false
 
-    if arg('discover') then
-       success = doDiscovery()
-       commandExecuted = true
-    elseif arg('ping') then
-       success = doPing()
-       commandExecuted = true
-    elseif arg('power') then
-       success = doPowerControl(arg('power'))
-       commandExecuted = true
-    elseif arg('info') then
-       success = doGetInfo()
-       commandExecuted = true
-    end
+   if arg('discover') then
+      doDiscovery()
+      commandExecuted = true
+   elseif arg('ping') then
+      doPing()
+      commandExecuted = true
+   elseif arg('power') then
+      doPowerControl(arg('power'))
+      commandExecuted = true
+   elseif arg('info') then
+      doGetInfo()
+      commandExecuted = true
+   elseif arg('command') then
+      doSendCommand(arg('command'))
+      commandExecuted = true
+   end
 
-    if not commandExecuted then
-       print(glHelp)
-    end
+   if not commandExecuted then
+      print(glHelp)
+   end

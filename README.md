@@ -1,8 +1,8 @@
-# Onkyo eISCP Control - Parasol Implementation
+# Onkyo AV Remote
 
 A Fluid-based implementation of the Onkyo eISCP (Integra Serial Control Protocol) for controlling Onkyo network-enabled audio receivers. This project replicates the functionality of the Python [onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) project using the Parasol framework.
 
-Can be used as a command-line tool, library module, or via a web interface.
+Can be used as a command-line tool, Fluid library, or via a web interface.
 
 ### Command Line Usage
 
