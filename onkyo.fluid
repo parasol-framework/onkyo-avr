@@ -8,7 +8,7 @@ Usage: parasol.exe onkyo.fluid [parameter=value ...]
   ping=true         - Test TCP connectivity with power status query
   power=on|off      - Send power control command (on or off)
   info=true|verbose - Show device information and available commands
-  command=VALUE     - Send custom command (raw ISCP or friendly name)
+  command=VALUE     - Send custom command(s) (raw ISCP or friendly name, comma-separated)
   host=IP           - Target IP address (default: 192.168.178.40)
   port=NUMBER       - Target port (default: 60128)
   timeout=SECONDS   - Connection timeout in seconds (default: 5)
@@ -16,9 +16,12 @@ Usage: parasol.exe onkyo.fluid [parameter=value ...]
 
 For verbose logging add --log-api
 
+Note that the numeric values associated with commands are hexadecimal.
+
 Command Examples:
   parasol onkyo.fluid command=PWR01        - Raw ISCP power on
   parasol onkyo.fluid command=MVL50        - Raw ISCP set volume to 50
+  parasol onkyo.fluid command=PWR01,MVL50  - Multiple commands (comma-separated)
   parasol onkyo.fluid command=power=on     - Friendly command format
   parasol onkyo.fluid discover=true --log-api
   parasol onkyo.fluid host=192.168.178.50 ping=true
@@ -225,7 +228,7 @@ local function doGetInfo()
 end
 
 ----------------------------------------------------------------------------------------------------------------------
--- Parse and send custom command (raw ISCP or friendly format)
+-- Parse and send custom command(s) (raw ISCP or friendly format)
 
 local function doSendCommand(commandStr)
    if not commandStr or commandStr == '' then
@@ -235,17 +238,31 @@ local function doSendCommand(commandStr)
 
    local connection = doConnect()
 
-   print('Sending command: ' .. commandStr)
-
-   local ex = catch(function()
-       connection:sendCommand(commandStr:upper())
-   end)
-
-   if ex then
-      print('Error sending command: ' .. ex.message)
-   else
-      if connection.lastResponse then
-         print('Response: ' .. connection.lastResponse.message())
+   -- Split commands by comma and process each one
+   local commands = string.split(commandStr, ',')
+   
+   for i, cmd in ipairs(commands) do
+      cmd = cmd:match('^%s*(.-)%s*$')  -- Trim whitespace
+      
+      if cmd != '' then
+         print('Sending command ' .. i .. '/' .. #commands .. ': ' .. cmd)
+         
+         local ex = catch(function()
+            connection:sendCommand(cmd:upper())
+         end)
+         
+         if ex then
+            print('Error sending command "' .. cmd .. '": ' .. ex.message)
+         else
+            if connection.lastResponse then
+               print('Response: ' .. connection.lastResponse.message())
+            end
+         end
+         
+         -- Small delay between commands if there are multiple
+         if i < #commands then
+            connection.proc.sleep(0.25)
+         end
       end
    end
 
