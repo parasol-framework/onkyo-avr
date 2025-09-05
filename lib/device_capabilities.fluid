@@ -3,7 +3,7 @@ Device capabilities mapping for Onkyo eISCP devices
 Handles model detection, modelset mapping, and command filtering
 --]]
 
-local cmd = require('./lib/eiscp-commands')
+local cmd = require('./lib/eiscp_commands')
 local capabilities = {}
 
 ----------------------------------------------------------------------------------------------------------------------

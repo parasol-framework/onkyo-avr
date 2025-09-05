@@ -5,10 +5,9 @@ Core eISCP (Integra Serial Control Protocol) implementation for Onkyo receivers
     include 'network'
 
     local eiscp = {}
-    local cmd = require('./lib/eiscp-commands')
+    local cmd = require('./lib/eiscp_commands')
     local capabilities = require('./lib/device_capabilities')
 
-    -- Default connection parameters
     local DEFAULT_PORT = 60128
     local DEFAULT_TIMEOUT = 1.0
     local EISCP_VERSION = 0x01
@@ -241,7 +240,7 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
             for i = 1, bytes_read do
                table.insert(connection.buffer, string.byte(read_buffer, i))
             end
-         
+
             -- Try to parse response
             if #connection.buffer >= 16 then
                local response = parseEISCPResponse(connection.buffer)
@@ -420,18 +419,7 @@ function Connection:sendCommand(Command, Timeout)
    self:logPacket(Command, response, #response, 'RECV')
 end
 
-function Connection:ping()
-   -- Send a simple query command as a ping to test connectivity
-   self:sendCommand('PWRQSTN') -- Power status query
-end
-
-function Connection:powerOn()
-   self:sendCommand('PWR01')
-end
-
-function Connection:powerOff()
-   self:sendCommand('PWR00')
-end
+----------------------------------------------------------------------------------------------------------------------
 
 function Connection:getDeviceInfo(discoveryData)
    local dev_info, error
@@ -470,18 +458,6 @@ function Connection:getAvailableCommands(Zone)
    end
 
    return capabilities.getAvailableCommands(self.deviceModel, Zone)
-end
-
--- Get command statistics for the connected device
-
-function Connection:getCommandStats(Zone)
-   Zone = Zone or 'main'
-
-   if not self.deviceModel then
-      return nil, 'No device model detected'
-   end
-
-   return capabilities.getCommandStats(self.deviceModel, Zone)
 end
 
 -- Check if the device is detected and has model information
