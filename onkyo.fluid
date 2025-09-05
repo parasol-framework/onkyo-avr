@@ -1,0 +1,335 @@
+glHelp = [[
+Usage: parasol onkyo.fluid [parameter=value ...]
+
+  help=true|COMMAND - Show general help or help for specific 3-letter command (e.g. help=PWR)
+  discover=true     - Discover Onkyo receivers via UDP broadcast
+  ping=true         - Test TCP connectivity with power status query
+  info=true|verbose - Show device information and available commands
+  command=VALUE     - Send custom command(s) (raw ISCP or friendly name, comma-separated)
+  host=IP           - Target IP address (default: 192.168.178.40)
+  port=NUMBER       - Target port (default: 60128)
+  timeout=SECONDS   - Connection timeout in seconds
+  response-output=FILE - Log all responses to file in hex format
+
+Note that the numeric values associated with commands are hexadecimal.
+
+Use the help to discover friendly command names and available values, e.g. 'power=on'.
+
+Command Examples:
+  parasol onkyo.fluid help=PWR             - Show help for PWR command
+  parasol onkyo.fluid command=PWR01        - Raw ISCP power on
+  parasol onkyo.fluid command=MVL30        - Raw ISCP set volume to 0x30 (48)
+  parasol onkyo.fluid command=PWR01,MVL50  - Multiple commands (comma-separated)
+  parasol onkyo.fluid power=on             - Friendly command format
+  parasol onkyo.fluid discover=true        - Discover receivers on the network
+  parasol onkyo.fluid host=192.168.178.50 ... - Fast connect to specific device
+  parasol onkyo.fluid info=verbose
+
+For verbose logging add --log-api.
+]]
+
+    local glSelf = obj.find('self')
+    local glPath = glSelf.workingPath
+    local eiscp = require('./lib/eiscp')
+    local discovery = require('./lib/discovery')
+    local display = require('./lib/command_display')
+    local cmd = require('./lib/eiscp_commands')
+
+    local glConfig = {
+       host = nil,
+       port = 60128,
+       timeout = 5.0,
+       responseOutputFile = nil
+    }
+
+    -- Store connection instance
+    local glConnection = nil
+
+----------------------------------------------------------------------------------------------------------------------
+-- Show help for a specific command
+
+local function showCommandHelp(Command)
+   Command = Command:upper()
+
+   -- Look up command in main zone (could extend to other zones later)
+   local cmddef = cmd.commands.main[Command]
+
+   if not cmddef then
+      print('Error: Command "' .. Command .. '" not found in command database.')
+      print('Use info=true to see all available commands.')
+      return
+   end
+
+   print('Command: ' .. Command .. ' (' .. (cmddef.name or 'unnamed') .. ')')
+   print('Description: ' .. (cmddef.description or 'No description available'))
+
+   if cmddef.aliases then
+      print('Aliases: ' .. table.concat(cmddef.aliases, ', '))
+   end
+
+   print('')
+   print('Available values:')
+
+   if cmddef.values then
+      for k, v in pairs(cmddef.values) do
+         local nameStr = ''
+         if type(v.name) == 'table' then
+            nameStr = ' (' .. table.concat(v.name, ', ') .. ')'
+         elseif v.name then
+            nameStr = ' (' .. v.name .. ')'
+         end
+
+         print('  ' .. Command .. k .. nameStr)
+         if v.description then -- Handle multi-line descriptions
+            local lines = string.split(v.description, '\n')
+            for _, line in ipairs(lines) do
+               print('    ' .. line)
+            end
+         end
+         print('')
+      end
+   else
+      print('  No values defined for this command')
+   end
+
+   print('Usage examples:')
+   print('  parasol onkyo.fluid command=' .. Command .. 'QSTN  -- Query current status')
+   if cmddef.values then
+      -- Show first non-query value as example
+      for k, v in pairs(cmddef.values) do
+         if k != 'QSTN' then
+            print('  parasol onkyo.fluid command=' .. Command .. k .. '     -- ' .. (v.description or 'Set value'))
+            break
+         end
+      end
+   end
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command implementations
+
+local function doDiscovery()
+   -- Performs UDP discovery on port 60128 (broadcast or direct IP)
+
+   if glConfig.host then
+      print('Discovering Onkyo receivers at ' .. glConfig.host .. '...')
+   else
+      print('Discovering Onkyo receivers on the network...')
+   end
+
+   print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
+   print('')
+
+   local receivers = discovery.findReceivers(glConfig.timeout, glConfig.host, tonumber(arg('limit')))
+   if not receivers then return end
+
+   if #receivers == 0 then
+      print('No Onkyo receivers found on the network')
+      return
+   end
+
+   print('Found ' .. #receivers .. ' Onkyo receiver(s):')
+   print('')
+
+   for i, receiver in ipairs(receivers) do
+      print('  ' .. i .. '. ' .. receiver.model)
+      print('     IP: ' .. (receiver.ip or 'Unknown'))
+      print('     Port: ' .. (receiver.port or 'Unknown'))
+      print('     Area: ' .. (receiver.area or 'Unknown'))
+      print('     MAC: ' .. (receiver.mac or 'Unknown'))
+      if receiver.raw then
+         print('     Raw: ' .. receiver.raw)
+      end
+      print('')
+   end
+
+   collectgarbage()
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Establishes TCP connection to receiver on configured host:port
+
+local function doConnect()
+   if not glConfig.host then
+      local receiver = discovery.findReceiver(nil, glConfig.timeout)
+      glConfig.host = receiver and receiver.ip or nil
+   end
+
+   collectgarbage()
+
+   if not glConfig.host then
+      error('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
+   end
+
+   print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
+
+   glConnection = eiscp.connect(glConfig.host, glConfig.port, glConfig.timeout, glConfig.responseOutputFile)
+   return glConnection
+end
+
+----------------------------------------------------------------------------------------------------------------------
+
+local function doGetInfo()
+   -- Requests device information and displays available commands
+
+   -- Get discovery data first (for fallback)
+   local discoveryData = nil
+   if not glConfig.host then
+      local receiver = discovery.findReceiver(nil, glConfig.timeout)
+      if receiver then
+         discoveryData = receiver
+         glConfig.host = receiver.ip
+      end
+   end
+
+   local connection = doConnect()
+
+   print('Requesting device information...')
+
+   -- Get device information (with discovery fallback)
+   connection:getDeviceInfo(discoveryData)  -- Sends NRIQSTN and parses response
+
+   if not connection:isDeviceDetected() then
+      print('Warning: Could not detect device model. Showing universal commands.')
+      print('')
+      if connection.lastResponse then
+         print('Response: ' .. connection.lastResponse.message())
+         print('')
+      end
+   end
+
+   -- Display device information
+   if connection.deviceInfo then
+      local zones = {'main'} -- TODO: detect actual zones from device
+      display.showDeviceInfo(connection.deviceInfo, connection.deviceModelsets, zones)
+   end
+
+   -- Display available commands
+   local verbose = arg('info') == 'verbose'
+   local model = connection.deviceModel or 'unknown'
+
+   display.showAvailableCommands(model, 'main', verbose)
+
+   connection:disconnect()
+   return true
+end
+
+----------------------------------------------------------------------------------------------------------------------
+-- Parse and send custom command(s) (raw ISCP or friendly format)
+
+local function doSendCommand(Command)
+   if not nz(Command) then
+      print('Error: No command specified')
+      return
+   end
+
+   local connection = doConnect()
+
+   -- Split commands by comma and process each one
+   local commands = string.split(Command, ',')
+
+   for i, cmd in ipairs(commands) do
+      cmd = cmd:match('^%s*(.-)%s*$')  -- Trim whitespace
+
+      if cmd != '' then
+         print('Sending command ' .. i .. '/' .. #commands .. ': ' .. cmd)
+
+         local ex = catch(function()
+            connection:sendCommand(cmd:upper())
+         end)
+
+         if ex then
+            print('Error sending command "' .. cmd .. '": ' .. ex.message)
+         else
+            if connection.lastResponse then
+               print('Response: ' .. connection.lastResponse.message())
+            end
+         end
+
+         -- Small delay between commands if there are multiple
+         if i < #commands then
+            connection.proc.sleep(0.25)
+         end
+      end
+   end
+
+   connection:disconnect()
+end
+
+----------------------------------------------------------------------------------------------------------------------
+
+   print('Onkyo A/V Remote')
+   print('')
+
+   local action = nil
+   for k, v in pairs(processing.task().parameters) do
+      _, _, opt, val = string.find(v, "([%-%a]+)=?(%a*)")
+
+      if v:endsWith('.fluid') then
+         -- Ignore script file
+      elseif opt == 'host' then
+         glConfig.host = val
+      elseif opt == 'port' then
+         glConfig.port = tonumber(val)
+      elseif opt == 'timeout' then
+         glConfig.timeout = tonumber(val)
+      elseif opt == 'response-output' then
+         glConfig.responseOutputFile = val         
+      elseif opt == 'help' then
+         if val:find('^%u%u%u$') then
+            showCommandHelp(val)
+         else
+            print(glHelp)
+         end
+         return
+      elseif opt == 'discover' then
+         action = doDiscovery
+      elseif opt == 'info' then
+         action = doGetInfo
+      elseif opt == 'command' then
+         action = function() doSendCommand(val) end
+      else
+         -- Check if the parameter is a friendly command (e.g. power=on)
+         local friendlyCommand = cmd.command_mappings.main[opt]
+         if friendlyCommand and val != '' then
+            -- Look up the command definition
+            local cmddef = cmd.commands.main[friendlyCommand]
+            if cmddef and cmddef.values then
+               -- Find the value that matches the friendly name
+               local commandValue = nil
+               for valueKey, valueDef in pairs(cmddef.values) do
+                  if valueDef.name then
+                     if type(valueDef.name) == 'table' then
+                        -- Check if val matches any name in the array
+                        for _, name in ipairs(valueDef.name) do
+                           if name == val then
+                              commandValue = valueKey
+                              break
+                           end
+                        end
+                     elseif valueDef.name == val then
+                        commandValue = valueKey
+                     end
+                  end
+                  if commandValue then break end
+               end
+               
+               if commandValue then
+                  local fullCommand = friendlyCommand .. commandValue
+                  doSendCommand(fullCommand)
+                  action = function() end -- Dummy to prevent default action
+               else
+                  print('Error: Value "' .. val .. '" not found for friendly command "' .. opt .. '"\n')
+                  showCommandHelp(friendlyCommand)
+                  return
+               end
+            end
+         end
+      end
+   end
+
+   if action then
+      action()
+   else
+      print(glHelp)
+   end
