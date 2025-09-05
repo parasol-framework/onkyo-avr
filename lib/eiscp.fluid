@@ -290,7 +290,7 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
       local file = obj.new('file', { path = LogFile, flags = flags })
       if file then
          if flags == 'WRITE' then file.acSeek(0, SEEK_END) end
-         conn.responseLogHandle = file
+         connection.responseLogHandle = file
          msg('Response logging enabled to: ' .. LogFile .. ' (flags: ' .. flags .. ')')
       else
          msg('Warning: Failed to open response output file: ' .. LogFile)
@@ -416,7 +416,7 @@ function Connection:sendCommand(Command, Timeout)
 
    msg('Found matching response for ' .. Command .. ': ' .. #response.data .. ' bytes')
    self.lastResponse = response
-   self:logPacket(Command, response, #response, 'RECV')
+   self:logPacket(Command, response.data, 'RECV')
 end
 
 ----------------------------------------------------------------------------------------------------------------------

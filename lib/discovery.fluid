@@ -121,7 +121,7 @@ function discovery.findReceivers(Timeout, FilterIP, Limit)
                      byteArray[i] = string.byte(buffer, i)
                   end
 
-                  local response = eiscp.parseEISCPResponse(byteArray, bytesRead)
+                  local response = eiscp.parseEISCPResponse(byteArray)
                   if response then
                      msg('ISCP Message: ' .. response.data)
 
