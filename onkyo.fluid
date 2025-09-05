@@ -6,7 +6,7 @@ Usage: parasol onkyo.fluid [parameter=value ...]
   ping=true         - Test TCP connectivity with power status query
   info=true|verbose - Show device information and available commands
   command=VALUE     - Send custom command(s) (raw ISCP or friendly name, comma-separated)
-  host=IP           - Target IP address (default: 192.168.178.40)
+  host=IP           - Target IP address
   port=NUMBER       - Target port (default: 60128)
   timeout=SECONDS   - Connection timeout in seconds
   response-output=FILE - Log all responses to file in hex format
@@ -22,7 +22,7 @@ Command Examples:
   parasol onkyo.fluid command=PWR01,MVL50  - Multiple commands (comma-separated)
   parasol onkyo.fluid power=on             - Friendly command format
   parasol onkyo.fluid discover=true        - Discover receivers on the network
-  parasol onkyo.fluid host=192.168.178.50 ... - Fast connect to specific device
+  parasol onkyo.fluid host=192.100.178.50 ... - Fast connect to specific device
   parasol onkyo.fluid info=verbose
 
 For verbose logging add --log-api.
