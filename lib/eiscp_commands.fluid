@@ -3,7 +3,7 @@
 --  from eiscp-commands.yaml
 --  at 2025-09-03 23:48:45.279139
 
-local onkyo_commands = {
+global glCommands = {
   commands = {
     main = {
       PWR = {
@@ -11000,5 +11000,3 @@ local onkyo_commands = {
     }
   }
 }
-
-return onkyo_commands
