@@ -3,36 +3,36 @@ Device capabilities mapping for Onkyo eISCP devices
 Handles model detection, modelset mapping, and command filtering
 --]]
 
-local cmd = require('./lib/eiscp_commands')
-local capabilities = {}
+   namespace 'capabilities'
+   _LIB[_NS] = { }
+   capabilities = _LIB[_NS]
 
 ----------------------------------------------------------------------------------------------------------------------
--- Device information parsing
-
 -- Parse NRIQSTN XML response to extract device information
 
-function capabilities.parseDeviceInfo(response)
+capabilities.parseDeviceInfo = function(response:table)
    if not response or not response.command then
       return nil, 'No response data'
    end
 
    local info = { }
 
-   msg('Parsing device info from response: ' .. response.command())
+   msg('Parsing device info from response: ' .. response.command)
 
-   info.xml = obj.new('xml', { statement=response.message() })
-   info.model    = nz(info.xml.getKey('/response/device/model'), nil)
-   info.firmware = nz(info.xml.getKey('/response/device/firmwareversion'), nil)
-   info.mac      = nz(info.xml.getKey('/response/device/macaddress'), nil)
-   info.year     = nz(info.xml.getKey('/response/device/year'), nil)
-   info.category = nz(info.xml.getKey('/response/device/category'), nil)
-   info.serial   = nz(info.xml.getKey('/response/device/deviceserial'), nil)
+   info.xml = obj.new('xml', { statement=response.message })
+   info.model    = info.xml.getKey('/response/device/model')
+   info.firmware = info.xml.getKey('/response/device/firmwareversion')
+   info.mac      = info.xml.getKey('/response/device/macaddress')
+   info.year     = info.xml.getKey('/response/device/year')
+   info.category = info.xml.getKey('/response/device/category')
+   info.serial   = info.xml.getKey('/response/device/deviceserial')
    return info
 end
 
+----------------------------------------------------------------------------------------------------------------------
 -- Create device info from discovery data (fallback when NRIIQSTN fails)
 
-function capabilities.createDeviceInfoFromDiscovery(discoveryData)
+capabilities.createDeviceInfoFromDiscovery = function(discoveryData:table)
    if not discoveryData then
       return nil, 'No discovery data provided'
    end
@@ -43,7 +43,7 @@ function capabilities.createDeviceInfoFromDiscovery(discoveryData)
       mac      = discoveryData.mac,
       ip       = discoveryData.ip,
       port     = discoveryData.port,
-      raw      =  discoveryData.raw or 'From discovery'
+      raw      = discoveryData.raw or 'From discovery'
    }
 
    return info
@@ -52,36 +52,36 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 -- Find which modelsets contain the specified device model
 
-function capabilities.findModelsets(model)
-   if not model or not cmd.modelsets then
+capabilities.findModelsets = function(model:str):table
+   if not model or not glCommands.modelsets then
       return {}
    end
 
    msg('Detecting modelsets for device model: ' .. model)
 
-   local modelsets = {}
+   modelsets = {}
 
-   for setName, models in pairs(cmd.modelsets) do
-      for _, deviceModel in ipairs(models) do
-         if deviceModel == model then
+   for setName, models in pairs(glCommands.modelsets) do
+      for deviceModel in values(models) do
+         if deviceModel is model then
             table.insert(modelsets, setName)
             break
          end
       end
    end
 
-   if #modelsets == 0 then
-      for setName, models in pairs(cmd.modelsets) do
-         for _, deviceModel in ipairs(models) do
+   if #modelsets is 0 then
+      for setName, models in pairs(glCommands.modelsets) do
+         for deviceModel in values(models) do
             -- Partial match: device model might be base name of a variant
             -- e.g., "TX-NR676E" should match "TX-NR676E(Ether)"
-            if deviceModel:match('^' .. model:gsub('%-', '%%-') .. '%(') then
+            if deviceModel:match(f'^{regex.escape(model)}\\(') then
                table.insert(modelsets, setName)
                break
             end
             -- Reverse partial match: modelset might have base name
             -- e.g., "TX-NR676E(Ether)" device should match "TX-NR676E" modelset entry
-            if model:match('^' .. deviceModel:gsub('%-', '%%-'):gsub('%(', '%%%('):gsub('%)', '%%%)') .. '%(') then
+            if model:match(f'^{regex.escape(deviceModel)}\\(') then
                table.insert(modelsets, setName)
                break
             end
@@ -92,15 +92,16 @@ function capabilities.findModelsets(model)
    return modelsets
 end
 
+----------------------------------------------------------------------------------------------------------------------
 -- Check if a model belongs to a specific modelset
 
-function capabilities.isModelInSet(model, setName)
-   if not model or not setName or not cmd.modelsets or not cmd.modelsets[setName] then
+capabilities.isModelInSet = function(model:str, setName:str):bool
+   if not model or not setName or not glCommands.modelsets or not glCommands.modelsets[setName] then
       return false
    end
 
-   for _, deviceModel in ipairs(cmd.modelsets[setName]) do
-      if deviceModel == model then
+   for deviceModel in values(glCommands.modelsets[setName]) do
+      if deviceModel is model then
          return true
       end
    end
@@ -112,13 +113,12 @@ end
 -- Filter command values based on device modelsets
 -- Returns only the values that are available for the specified modelsets
 
-function capabilities.filterCommandValues(command, deviceModelsets)
+capabilities.filterCommandValues = function(command:table, deviceModelsets:table):table
    if not command or not command.values then
       return {}
    end
 
-   local filtered = {}
-
+   filtered = {}
    for valueCode, valueData in pairs(command.values) do
       local include = false
 
@@ -127,8 +127,8 @@ function capabilities.filterCommandValues(command, deviceModelsets)
          include = true
       else
          -- Check if any of the device's modelsets match this value's requirement
-         for _, modelset in ipairs(deviceModelsets or {}) do
-            if valueData.models == modelset then
+         for modelset in values(deviceModelsets or {}) do
+            if valueData.models is modelset then
                include = true
                break
             end
@@ -146,28 +146,28 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 -- Get available commands for a device model in a specific zone
 
-function capabilities.getAvailableCommands(model, zone)
-   if not model then error('No device model specified') end
+capabilities.getAvailableCommands = function(model:str, zone:str):table
+   assert(model, 'No device model specified')
 
-   zone = zone or 'main'
+   zone ?= 'main'
 
-   if not cmd.commands or not cmd.commands[zone] then
+   if not glCommands.commands or not glCommands.commands[zone] then
       return {}, 'Invalid zone: ' .. zone
    end
 
-   local modelsets = capabilities.findModelsets(model)
-   local availableCommands = {}
+   modelsets = capabilities.findModelsets(model)
+   availableCommands = {}
 
-   for cmdCode, cmdData in pairs(cmd.commands[zone]) do
+   for cmdCode, cmdData in pairs(glCommands.commands[zone]) do
       -- Filter the command values for this device
-      local filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
+      filteredValues = capabilities.filterCommandValues(cmdData, modelsets)
 
       -- Only include the command if it has at least one available value
       if next(filteredValues) then
          availableCommands[cmdCode] = {
-            name = cmdData.name,
+            name        = cmdData.name,
             description = cmdData.description,
-            values = filteredValues
+            values      = filteredValues
          }
       end
    end
@@ -178,18 +178,14 @@ end
 ----------------------------------------------------------------------------------------------------------------------
 -- Get list of all available zones for commands
 
-function capabilities.getAvailableZones()
-   if not cmd.commands then
-      return {}
-   end
+capabilities.getAvailableZones = function():table
+   glCommands.commands ?? return {}
 
-   local zones = {}
-   for zone, _ in pairs(cmd.commands) do
+   zones = {}
+   for zone, _ in pairs(glCommands.commands) do
       table.insert(zones, zone)
    end
 
    table.sort(zones)
    return zones
 end
-
-   return capabilities

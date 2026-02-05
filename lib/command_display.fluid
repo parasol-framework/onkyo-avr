@@ -3,14 +3,16 @@ Command display formatting for Onkyo eISCP devices
 Handles organization and presentation of device commands
 --]]
 
-local capabilities = require('./lib/device_capabilities')
-local display = {}
+   import './device_capabilities'
+
+   namespace 'display'
+   _LIB[_NS] = { }
+   display = _LIB[_NS]
 
 ----------------------------------------------------------------------------------------------------------------------
--- Command categorization
-
 -- Define command categories for better organization
-local COMMAND_CATEGORIES = {
+
+COMMAND_CATEGORIES = {
    power = {
       name = 'POWER & SYSTEM',
       commands = {'PWR', 'SLP', 'DIM', 'OSD', 'MEM', 'RST'},
@@ -68,11 +70,13 @@ local COMMAND_CATEGORIES = {
    }
 }
 
+----------------------------------------------------------------------------------------------------------------------
 -- Get category for a command
-local function getCommandCategory(cmdCode)
+
+function getCommandCategory(cmdCode:str):<str, table>
    for categoryKey, category in pairs(COMMAND_CATEGORIES) do
-      for _, cmd in ipairs(category.commands) do
-         if cmd == cmdCode then
+      for cmd in values(category.commands) do
+         if cmd is cmdCode then
             return categoryKey, category
          end
       end
@@ -81,79 +85,78 @@ local function getCommandCategory(cmdCode)
 end
 
 ----------------------------------------------------------------------------------------------------------------------
--- Display formatting
-
 -- Format a single command value for display
-function display.formatCommandValue(valueCode, valueData, verbose)
-   if not valueData then
-      return valueCode
-   end
 
-   local result = valueCode
+function display.formatCommandValue(valueCode:str, valueData:table, verbose:bool):str
+   valueData ?? return valueCode
+
+   result = valueCode
 
    if valueData.name then
-      if type(valueData.name) == 'table' then
-         -- Multiple names/aliases
-         result = result .. ' (' .. table.concat(valueData.name, '/') .. ')'
+      if type(valueData.name) is 'table' then -- Multiple names/aliases
+         result ..= ' (' .. table.concat(valueData.name, '/') .. ')'
       else
-         result = result .. ' (' .. valueData.name .. ')'
+         result ..= ' (' .. valueData.name .. ')'
       end
    end
 
    if verbose and valueData.description then
-      result = result .. ' - ' .. valueData.description
+      result ..= ' - ' .. valueData.description
    end
 
    return result
 end
 
+----------------------------------------------------------------------------------------------------------------------
 -- Format a single command for display
-function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
-   if not cmdData then
-      return {}
-   end
 
-   local lines = {}
+function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
+   cmdData ?? return {}
+   lines = {}
 
    -- Command header
-   local header = string.format('  %s', cmdCode)
+
+   header = string.format('  %s', cmdCode)
+
    if cmdData.name then
-      header = header .. string.format(' (%s)', cmdData.name)
+      header ..= string.format(' (%s)', cmdData.name)
    end
+
    if cmdData.description then
-      header = header .. ' - ' .. cmdData.description
+      header ..= ' - ' .. cmdData.description
    end
+
    table.insert(lines, header)
 
    -- Filter values for this device
-   local filteredValues = capabilities.filterCommandValues(cmdData, deviceModelsets)
-   local valueCount = 0
-   for _ in pairs(filteredValues) do valueCount = valueCount + 1 end
+   filteredValues = capabilities.filterCommandValues(cmdData, deviceModelsets)
+   valueCount = 0
+   for _ in pairs(filteredValues) do valueCount++ end
 
    if verbose and valueCount > 0 then
       -- Show individual values
-      local sortedValues = {}
+      sortedValues = {}
       for valueCode, valueData in pairs(filteredValues) do
          table.insert(sortedValues, {code = valueCode, data = valueData})
       end
 
       -- Sort values - put QSTN (query) first if it exists
       table.sort(sortedValues, function(a, b)
-         if a.code == 'QSTN' then return true end
-         if b.code == 'QSTN' then return false end
+         if a.code is 'QSTN' then return true end
+         if b.code is 'QSTN' then return false end
          return tostring(a.code) < tostring(b.code)
       end)
 
       -- Limit displayed values to prevent overwhelming output
-      local maxValues = 8
-      local displayed = 0
-      for _, value in ipairs(sortedValues) do
+      maxValues = 8
+      displayed = 0
+      for value in values(sortedValues) do
          if displayed >= maxValues then
             table.insert(lines, string.format('    ... and %d more values', valueCount - displayed))
             break
          end
 
-         local valueStr = display.formatCommandValue(value.code, value.data, false)
+         valueStr = display.formatCommandValue(value.code, value.data, false)
          table.insert(lines, '    ' .. valueStr)
          displayed = displayed + 1
       end
@@ -168,10 +171,9 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
 end
 
 ----------------------------------------------------------------------------------------------------------------------
--- Main display functions
-
 -- Display device information
-function display.showDeviceInfo(deviceInfo, modelsets, zones)
+
+function display.showDeviceInfo(deviceInfo:table, modelsets:table, zones:table)
    print('=== DEVICE INFORMATION ===')
 
    if deviceInfo.model then
@@ -199,13 +201,14 @@ function display.showDeviceInfo(deviceInfo, modelsets, zones)
    print('')
 end
 
+----------------------------------------------------------------------------------------------------------------------
 -- Display available commands organized by category
-function display.showAvailableCommands(model, zone, verbose)
-   zone = zone or 'main'
-   verbose = verbose or false
 
-   local availableCommands = capabilities.getAvailableCommands(model, zone)
-   local modelsets = capabilities.findModelsets(model)
+function display.showAvailableCommands(model:str, zone:str, verbose:bool)
+   zone ?= 'main'
+
+   availableCommands = capabilities.getAvailableCommands(model, zone)
+   modelsets = capabilities.findModelsets(model)
 
    if not next(availableCommands) then
       print('No commands available for model: ' .. (model or 'unknown'))
@@ -219,11 +222,11 @@ function display.showAvailableCommands(model, zone, verbose)
    print('')
 
    -- Group commands by category
-   local categorized = {}
-   local uncategorized = {}
+   categorized = {}
+   uncategorized = {}
 
    for cmdCode, cmdData in pairs(availableCommands) do
-      local categoryKey, category = getCommandCategory(cmdCode)
+      categoryKey, category = getCommandCategory(cmdCode)
       if not categorized[categoryKey] then
          categorized[categoryKey] = {
             name = category.name,
@@ -235,38 +238,36 @@ function display.showAvailableCommands(model, zone, verbose)
    end
 
    -- Sort categories for consistent display
-   local sortedCategories = {}
-   local categoryOrder = {'power', 'volume', 'input', 'listening', 'speaker', 'tone', 'video', 'network', 'trigger', 'audyssey', 'info', 'other'}
+   sortedCategories = {}
+   categoryOrder = {'power', 'volume', 'input', 'listening', 'speaker', 'tone', 'video', 'network', 'trigger', 'audyssey', 'info', 'other'}
 
-   for _, categoryKey in ipairs(categoryOrder) do
+   for categoryKey in values(categoryOrder) do
       if categorized[categoryKey] then
          table.insert(sortedCategories, {key = categoryKey, data = categorized[categoryKey]})
       end
    end
 
    -- Display each category
-   for _, category in ipairs(sortedCategories) do
+   for category in values(sortedCategories) do
       print(category.data.name)
       if verbose then
          print('  ' .. category.data.description)
       end
 
       -- Sort commands within category
-      local sortedCommands = {}
+      sortedCommands = {}
       for cmdCode, cmdData in pairs(category.data.commands) do
          table.insert(sortedCommands, {code = cmdCode, data = cmdData})
       end
       table.sort(sortedCommands, function(a, b) return a.code < b.code end)
 
       -- Display commands in this category
-      for _, command in ipairs(sortedCommands) do
-         local lines = display.formatCommand(command.code, command.data, verbose, modelsets)
-         for _, line in ipairs(lines) do
+      for command in values(sortedCommands) do
+         lines = display.formatCommand(command.code, command.data, verbose, modelsets)
+         for line in values(lines) do
             print(line)
          end
       end
       print('')
    end
 end
-
-return display
