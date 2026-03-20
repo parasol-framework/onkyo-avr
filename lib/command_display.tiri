@@ -152,17 +152,17 @@ function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
       displayed = 0
       for value in values(sortedValues) do
          if displayed >= maxValues then
-            table.insert(lines, string.format('    ... and %d more values', valueCount - displayed))
+            table.insert(lines, f'    ... and {valueCount - displayed} more values')
             break
          end
 
          valueStr = display.formatCommandValue(value.code, value.data, false)
-         table.insert(lines, '    ' .. valueStr)
+         table.insert(lines, f'    {valueStr}')
          displayed = displayed + 1
       end
    elseif valueCount > 0 then
       -- Just show value count
-      table.insert(lines, string.format('    (%d values available)', valueCount))
+      table.insert(lines, f'    ({valueCount} values available)')
    else
       table.insert(lines, '    (No values available for this device)')
    end

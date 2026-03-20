@@ -1,5 +1,5 @@
 glHelp = [[
-Usage: parasol onkyo.fluid [parameter=value ...]
+Usage: origo onkyo.tiri [parameter=value ...]
 
   help=true|COMMAND - Show general help or help for specific 3-letter command (e.g. help=PWR)
   discover=true     - Discover Onkyo receivers via UDP broadcast
@@ -16,14 +16,14 @@ Note that the numeric values associated with commands are hexadecimal.
 Use the help to discover friendly command names and available values, e.g. 'power=on'.
 
 Command Examples:
-  parasol onkyo.fluid help=PWR             - Show help for PWR command
-  parasol onkyo.fluid command=PWR01        - Raw ISCP power on
-  parasol onkyo.fluid command=MVL30        - Raw ISCP set volume to 0x30 (48)
-  parasol onkyo.fluid command=PWR01,MVL50  - Multiple commands (comma-separated)
-  parasol onkyo.fluid power=on             - Friendly command format
-  parasol onkyo.fluid discover=true        - Discover receivers on the network
-  parasol onkyo.fluid host=192.100.178.50 ... - Fast connect to specific device
-  parasol onkyo.fluid info=verbose
+  origo onkyo.tiri help=PWR             - Show help for PWR command
+  origo onkyo.tiri command=PWR01        - Raw ISCP power on
+  origo onkyo.tiri command=MVL30        - Raw ISCP set volume to 0x30 (48)
+  origo onkyo.tiri command=PWR01,MVL50  - Multiple commands (comma-separated)
+  origo onkyo.tiri power=on             - Friendly command format
+  origo onkyo.tiri discover=true        - Discover receivers on the network
+  origo onkyo.tiri host=192.100.178.50 ... - Fast connect to specific device
+  origo onkyo.tiri info=verbose
 
 For verbose logging add --log-api.
 ]]
@@ -55,12 +55,12 @@ function showCommandHelp(Command)
    cmddef = glCommands.commands.main[Command]
 
    if not cmddef then
-      print('Error: Command "' .. Command .. '" not found in command database.')
+      print(f'Error: Command "{Command}" not found in command database.')
       print('Use info=true to see all available commands.')
       return
    end
 
-   print('Command: ' .. Command .. ' (' .. (cmddef.name or 'unnamed') .. ')')
+   print(f'Command: {Command} ({cmddef.name ?? "unnamed"})')
    print('Description: ' .. (cmddef.description or 'No description available'))
 
    if cmddef.aliases then
@@ -83,7 +83,7 @@ function showCommandHelp(Command)
          if v.description then -- Handle multi-line descriptions
             lines = string.split(v.description, '\n')
             for line in values(lines) do
-               print('    ' .. line)
+               print(f'    {line}')
             end
          end
          print('')
@@ -93,12 +93,12 @@ function showCommandHelp(Command)
    end
 
    print('Usage examples:')
-   print('  parasol onkyo.fluid command=' .. Command .. 'QSTN  -- Query current status')
+   print(f'  origo onkyo.tiri command={Command}QSTN  -- Query current status')
    if cmddef.values then
       -- Show first non-query value as example
       for k, v in pairs(cmddef.values) do
          if k != 'QSTN' then
-            print('  parasol onkyo.fluid command=' .. Command .. k .. '     -- ' .. (v.description or 'Set value'))
+            print(f'  origo onkyo.tiri command={Command}{k}     -- {v.description or "Set value"}')
             break
          end
       end
@@ -157,9 +157,7 @@ function doConnect()
 
    processing.collect()
 
-   if not glConfig.host then
-      error('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
-   end
+   glConfig.host ?? error('Error: No target host specified and no receivers found on the network. Use host=IP or discover first.')
 
    print('Connecting to ' .. glConfig.host .. ':' .. glConfig.port .. '...')
 
@@ -262,12 +260,12 @@ end
    print('')
 
    action = nil
-   rxOptionValue = regex.new([[([\-a-zA-Z]+)=?([a-zA-Z]*)]])
+   rxOptionValue = regex.new([[([\-a-zA-Z]+)=?(.*)]])
 
    for k, v in pairs(processing.task().parameters) do
       opt, val = rxOptionValue.extract(v)
 
-      if v:endsWith('.fluid') then
+      if v:endsWith('.tiri') then
          -- Ignore script file
       elseif opt is 'host' then
          glConfig.host = val

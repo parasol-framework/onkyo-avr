@@ -1,8 +1,8 @@
 # Onkyo AV Remote
 
-A Fluid-based implementation of the Onkyo eISCP (Integra Serial Control Protocol) for controlling Onkyo network-enabled audio receivers. This project replicates the functionality of the Python [onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) project using the Parasol framework.
+A Tiri-based implementation of the Onkyo eISCP (Integra Serial Control Protocol) for controlling Onkyo network-enabled audio receivers. This project replicates the functionality of the Python [onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) project using the Parasol framework.
 
-Can be used as a command-line tool or Fluid library.
+Can be used as a command-line tool or Tiri library.
 
 ## Command Line Usage
 
@@ -10,30 +10,30 @@ Can be used as a command-line tool or Fluid library.
 
 ```bash
 # Discover receivers on the network
-parasol onkyo.fluid discover
+parasol onkyo.tiri discover
 
 # Get device information and available commands
-parasol onkyo.fluid info
+parasol onkyo.tiri info
 
 # Show verbose device information with all command details
-parasol onkyo.fluid info=verbose
+origo onkyo.tiri info=verbose
 
 # Control power using friendly commands
-parasol onkyo.fluid power=on
-parasol onkyo.fluid power=off
+origo onkyo.tiri power=on
+origo onkyo.tiri power=off
 
 # Send raw ISCP commands
-parasol onkyo.fluid command=PWR01        # Power on
-parasol onkyo.fluid command=MVL30        # Set volume to 0x30 (48)
+origo onkyo.tiri command=PWR01        # Power on
+origo onkyo.tiri command=MVL30        # Set volume to 0x30 (48)
 
 # Send multiple commands (comma-separated)
-parasol onkyo.fluid command=PWR01,MVL50  # Power on and set volume
+origo onkyo.tiri command=PWR01,MVL50  # Power on and set volume
 
 # Use custom settings
-parasol onkyo.fluid host=192.168.178.50 port=60128 timeout=10 command=PWRQSTN
+origo onkyo.tiri host=192.168.178.50 port=60128 timeout=10 command=PWRQSTN
 
 # Get help for specific command
-parasol onkyo.fluid help=PWR
+origo onkyo.tiri help=PWR
 ```
 
 ## Command Reference
@@ -63,23 +63,23 @@ The program supports friendly command syntax for common operations. Instead of u
 
 ```bash
 # Power control
-parasol onkyo.fluid power=on
-parasol onkyo.fluid power=off
-parasol onkyo.fluid power=standby
+origo onkyo.tiri power=on
+origo onkyo.tiri power=off
+origo onkyo.tiri power=standby
 
 # Volume control (if supported by your model)
-parasol onkyo.fluid volume=30
-parasol onkyo.fluid mute=on
-parasol onkyo.fluid mute=off
+origo onkyo.tiri volume=30
+origo onkyo.tiri mute=on
+origo onkyo.tiri mute=off
 
 # Input selection (model-specific)
-parasol onkyo.fluid input=tv
-parasol onkyo.fluid input=bluray
+origo onkyo.tiri input=tv
+origo onkyo.tiri input=bluray
 ```
 
 To see all available friendly commands for your specific receiver model, run:
 ```bash
-parasol onkyo.fluid info=verbose
+origo onkyo.tiri info=verbose
 ```
 
 ## Notes
@@ -91,7 +91,7 @@ parasol onkyo.fluid info=verbose
 
 ## Library Usage
 
-The Onkyo modules can also be used as Fluid libraries in your own scripts:
+The Onkyo modules can also be used as Tiri libraries in your own scripts:
 
 ```lua
 local eiscp = require('./lib/eiscp')

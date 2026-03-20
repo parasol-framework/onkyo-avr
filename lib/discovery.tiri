@@ -29,7 +29,7 @@ end
 function parseDeviceInfo(Response:str):table
    -- Parse response format from discovery
    -- Can be: !1ECNTX-NR609/60128/DX/001122334455 or ECNTX-NR609/60128/DX/001122334455
-   assert(Response and #Response >= 10, 'Invalid discovery response: ' .. tostring(Response))
+   assert(Response and #Response >= 10, f'Invalid discovery response: {Response}')
 
    -- Handle both formats: with or without !1ECN prefix
    local data
@@ -46,9 +46,9 @@ function parseDeviceInfo(Response:str):table
       msg('Warning: Incomplete device info: ' .. data)
       return {
          model = parts[1] or 'Unknown',
-         port = tonumber(parts[2]) or DISCOVERY_PORT,
-         area = parts[3] or 'Unknown',
-         mac = parts[4] or 'Unknown'
+         port  = tonumber(parts[2]) or DISCOVERY_PORT,
+         area  = parts[3] or 'Unknown',
+         mac   = parts[4] or 'Unknown'
       }
    end
 
@@ -74,7 +74,7 @@ discovery.findReceivers = function(Timeout, FilterIP, Limit)
    sockets = {}
 
    -- Create eISCP packets for discovery commands (use raw ISCP, not TCP-wrapped)
-   onkyoPacket = eiscp.createEISCPPacket('!xECNQSTN')
+   onkyoPacket   = eiscp.createEISCPPacket('!xECNQSTN')
    pioneerPacket = eiscp.createEISCPPacket('!pECNQSTN')
 
    -- Convert packet arrays to strings for transmission
@@ -86,9 +86,9 @@ discovery.findReceivers = function(Timeout, FilterIP, Limit)
       return str
    end
 
-   onkyoPacketStr = packetToString(onkyoPacket)
+   onkyoPacketStr   = packetToString(onkyoPacket)
    pioneerPacketStr = packetToString(pioneerPacket)
-   packetStrs = { onkyoPacketStr, pioneerPacketStr }
+   packetStrs       = { onkyoPacketStr, pioneerPacketStr }
 
    buffer     = string.alloc(1024)
    source     = struct.new('IPAddress')
@@ -194,8 +194,8 @@ discovery.findReceivers = function(Timeout, FilterIP, Limit)
 
    -- Wait for responses
    local startTime = mSys.PreciseTime()
-   local result = proc.sleep()
-   local duration = (mSys.PreciseTime() - startTime) / 1000000
+   local result    = proc.sleep()
+   local duration  = (mSys.PreciseTime() - startTime) / 1000000
 
    msg('Discovery completed in ' .. string.format('%.2f', duration) .. 's, found ' .. #receivers .. ' receivers')
 

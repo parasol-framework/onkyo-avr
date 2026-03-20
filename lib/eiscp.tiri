@@ -8,7 +8,7 @@ Core eISCP (Integra Serial Control Protocol) implementation for Onkyo receivers
 
    include 'network'
 
-   loadFile(glPath .. 'lib/eiscp_commands.fluid')
+   loadFile(glPath .. 'lib/eiscp_commands.tiri')
    import './device_capabilities'
 
    HEADER_SIZE      <const> = 16
