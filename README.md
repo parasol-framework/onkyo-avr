@@ -1,6 +1,6 @@
 # Onkyo AV Remote
 
-A Tiri-based implementation of the Onkyo eISCP (Integra Serial Control Protocol) for controlling Onkyo network-enabled audio receivers. This project replicates the functionality of the Python [onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) project using the Parasol framework.
+A Tiri-based implementation of the Onkyo eISCP (Integra Serial Control Protocol) for controlling Onkyo network-enabled audio receivers. This project replicates the functionality of the Python [onkyo-eiscp](https://github.com/miracle2k/onkyo-eiscp) project by using the [Kotuku](https://github.com/parasol-framework/kotuku) framework.
 
 Can be used as a command-line tool or Tiri library.
 
@@ -10,10 +10,10 @@ Can be used as a command-line tool or Tiri library.
 
 ```bash
 # Discover receivers on the network
-parasol onkyo.tiri discover
+origo onkyo.tiri discover
 
 # Get device information and available commands
-parasol onkyo.tiri info
+origo onkyo.tiri info
 
 # Show verbose device information with all command details
 origo onkyo.tiri info=verbose
@@ -94,19 +94,21 @@ origo onkyo.tiri info=verbose
 The Onkyo modules can also be used as Tiri libraries in your own scripts:
 
 ```lua
-local eiscp = require('./lib/eiscp')
-local discovery = require('./lib/discovery')
+   import './lib/eiscp'
+   import './lib/discovery'
+   import './lib/command_display'
+   import './lib/eiscp_commands'
 
--- Discover receivers
-local receivers = discovery.findReceivers(5.0)  -- 5 second timeout
+   -- Discover receivers
+   receivers = discovery.findReceivers(5.0)  -- 5 second timeout
 
--- Connect to a receiver
-local connection = eiscp.connect('192.168.1.40', 60128, 5.0)
+   -- Connect to a receiver
+   connection = eiscp.connect('192.168.1.40', 60128, 5.0)
 
--- Send commands
-connection:sendCommand('PWR01')  -- Power on
-connection:sendCommand('PWRQSTN')  -- Query power status
+   -- Send commands
+   connection:sendCommand('PWR01')  -- Power on
+   connection:sendCommand('PWRQSTN')  -- Query power status
 
--- Disconnect
-connection:disconnect()
+   -- Disconnect
+   connection:disconnect()
 ```
