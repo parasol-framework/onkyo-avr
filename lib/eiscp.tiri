@@ -182,8 +182,7 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
       deviceModelsets   = {},
       responseLogHandle = nil,
       responses         = { },
-      buffer            = { },
-      proc              = processing.new({ timeout = Timeout })
+      buffer            = { }
    }
 
    connection.socket = obj.new('netsocket', {
@@ -193,15 +192,15 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
          if State is NTC_CONNECTED then
             msg('Connected successfully, signaling...')
             connect_error = ERR_Okay
-            connection.proc.signal()
+            Socket.acSignal()
          elseif State is NTC_DISCONNECTED then
             msg('Connection closed')
             connect_error = ERR_Disconnected
-            connection.proc.signal()
+            Socket.acSignal()
          elseif State is NTC_FAILED then
             msg('Connection failed')
             connect_error = ERR_ConnectionRefused
-            connection.proc.signal()
+            Socket.acSignal()
          end
       end,
       incoming = function(Socket)
@@ -233,19 +232,20 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
                   connection.buffer = remaining
                   msg(f'Reduced buffer content to {#connection.buffer} bytes.')
 
-                  connection.proc.signal()
+                  Socket.acSignal()
                end
 
             end
          elseif err != ERR_Okay then
             resp_error = err
-            connection.proc.signal()
+            Socket.acSignal()
          end
       end
    })
 
+   connection.proc = processing.new({ timeout = Timeout, signals = array<object> { connection.socket } })
    check connection.socket.mtConnect(Host, Port)
-   check connection.proc.sleep(Timeout, true, false) -- Wait for connection to succeed
+   check connection.proc.sleep(Timeout) -- Wait for connection to succeed
    check connect_error
 
    setmetatable(connection, Connection)
@@ -268,7 +268,7 @@ function eiscp.connect(Host, Port, Timeout, LogFile)
    -- A short pause is necessary because the AVR may send a message on connection before it will start
    -- accepting commands.
 
-   connection.proc.sleep(0.1)
+   processing.halt(0.1)
    return connection
 end
 

@@ -246,7 +246,7 @@ function doSendCommand(Command)
 
          -- Small delay between commands if there are multiple
          if i < #commands then
-            connection.proc.sleep(0.25)
+            processing.halt(0.25)
          end
       end
    end
