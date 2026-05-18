@@ -88,7 +88,7 @@ end
 -- Format a single command value for display
 
 function display.formatCommandValue(valueCode:str, valueData:table, verbose:bool):str
-   valueData ?? return valueCode
+   valueData ?! return valueCode
 
    result = valueCode
 
@@ -111,7 +111,7 @@ end
 -- Format a single command for display
 
 function display.formatCommand(cmdCode, cmdData, verbose, deviceModelsets)
-   cmdData ?? return {}
+   cmdData ?! return {}
    lines = {}
 
    -- Command header

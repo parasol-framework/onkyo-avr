@@ -276,7 +276,7 @@ end
 -- Log packet data
 
 function Connection:logPacket(command, packetBytes, direction)
-   self.responseLogHandle ?? return
+   self.responseLogHandle ?! return
 
    -- Convert packet bytes to hex string
    hexString = ''
@@ -312,7 +312,7 @@ end
 -- Helper function to clear pending responses from socket buffer (like Python implementation)
 
 function Connection:clearPendingResponses()
-   self.socket ?? return
+   self.socket ?! return
 
    msg('Clearing pending responses from socket buffer...')
 
@@ -357,7 +357,7 @@ end
 -- Command interface
 
 function Connection:sendCommand(Command, Timeout)
-   self.socket ?? raise ERR_Disconnected
+   self.socket ?! raise ERR_Disconnected
 
    Timeout ?= DEFAULT_TIMEOUT
 
@@ -416,7 +416,7 @@ function Connection:getAvailableCommands(Zone)
    Zone ?= 'main'
    msg('getAvailableCommands() Zone: ' .. Zone)
 
-   self.deviceModel ?? return glCommands.commands[Zone] or {}
+   self.deviceModel ?! return glCommands.commands[Zone] or {}
 
    return capabilities.getAvailableCommands(self.deviceModel, Zone)
 end

@@ -179,7 +179,7 @@ end
 -- Get list of all available zones for commands
 
 capabilities.getAvailableZones = function():table
-   glCommands.commands ?? return {}
+   glCommands.commands ?! return {}
 
    zones = {}
    for zone, _ in pairs(glCommands.commands) do

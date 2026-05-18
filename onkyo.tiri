@@ -1,36 +1,7 @@
-glHelp = [[
-Usage: origo onkyo.tiri [parameter=value ...]
-
-  help=true|COMMAND - Show general help or help for specific 3-letter command (e.g. help=PWR)
-  discover=true     - Discover Onkyo receivers via UDP broadcast
-  ping=true         - Test TCP connectivity with power status query
-  info=true|verbose - Show device information and available commands
-  command=VALUE     - Send custom command(s) (raw ISCP or friendly name, comma-separated)
-  host=IP           - Target IP address
-  port=NUMBER       - Target port (default: 60128)
-  timeout=SECONDS   - Connection timeout in seconds
-  response-output=FILE - Log all responses to file in hex format
-
-Note that the numeric values associated with commands are hexadecimal.
-
-Use the help to discover friendly command names and available values, e.g. 'power=on'.
-
-Command Examples:
-  origo onkyo.tiri help=PWR             - Show help for PWR command
-  origo onkyo.tiri command=PWR01        - Raw ISCP power on
-  origo onkyo.tiri command=MVL30        - Raw ISCP set volume to 0x30 (48)
-  origo onkyo.tiri command=PWR01,MVL50  - Multiple commands (comma-separated)
-  origo onkyo.tiri power=on             - Friendly command format
-  origo onkyo.tiri discover=true        - Discover receivers on the network
-  origo onkyo.tiri host=192.100.178.50 ... - Fast connect to specific device
-  origo onkyo.tiri info=verbose
-
-For verbose logging add --log-api.
-]]
-
    global glSelf = obj.find('self')
    global glPath = glSelf.workingPath
 
+   import 'options'
    import './lib/eiscp'
    import './lib/discovery'
    import './lib/command_display'
@@ -40,10 +11,119 @@ For verbose logging add --log-api.
       host = nil,
       port = 60128,
       timeout = 5.0,
+      limit = nil,
       responseOutputFile = nil
    }
 
    global glConnection = nil
+   global glFriendlyOptions = array<table>
+
+----------------------------------------------------------------------------------------------------------------------
+-- Command-line option management
+
+function validatePort(Parser:table, ArgName:str, Value:any, Param:table)
+   if Value < 1 or Value > 65535 then
+      raise ERR_OutOfRange, 'Port must be between 1 and 65535.'
+   end
+end
+
+function validateLimit(Parser:table, ArgName:str, Value:any, Param:table)
+   if Value < 1 then
+      raise ERR_OutOfRange, 'Limit must be 1 or higher.'
+   end
+end
+
+function buildOptionParser():table
+   glFriendlyOptions:clear()
+
+   local parser = options({
+      name = 'Onkyo A/V Remote',
+      cmdName = 'onkyo.tiri',
+      description = [[Control Onkyo network-enabled A/V receivers using eISCP.
+
+Note that numeric command values are hexadecimal.  Use help=COMMAND or help=friendly-name to inspect
+the available values for a receiver command, for example help=PWR or help=power.]],
+      epilog = [[Command examples:
+  origo onkyo.tiri help=PWR
+  origo onkyo.tiri command=PWR01
+  origo onkyo.tiri command=MVL30
+  origo onkyo.tiri command=PWR01,MVL50
+  origo onkyo.tiri power=on
+  origo onkyo.tiri discover
+  origo onkyo.tiri host=192.168.178.50 command=PWRQSTN
+  origo onkyo.tiri info=verbose
+
+For verbose logging add --log-api.]],
+      args = array<table> {
+         { name = 'discover', kind = 'flag',
+           comment = 'Discover Onkyo receivers via UDP broadcast.' },
+         { name = 'info', kind = 'option', type = 'enum',
+           choices = array<string> { 'true', 'verbose' }, implicit = 'true',
+           comment = 'Show device information and available commands.' },
+         { name = 'command', kind = 'option', type = 'str', metavar = 'VALUE',
+           comment = 'Send raw ISCP command(s), comma-separated for multiple commands.' },
+         { name = 'host', kind = 'option', type = 'str', metavar = 'IP',
+           comment = 'Target IP address.  If omitted, the receiver is discovered automatically.' },
+         { name = 'port', kind = 'option', type = 'int', default = 60128, exec = validatePort,
+           comment = 'Target TCP port.' },
+         { name = 'timeout', kind = 'option', type = 'num', default = 5.0, metavar = 'SECONDS',
+           comment = 'Connection and discovery timeout in seconds.' },
+         { name = 'response-output', kind = 'option', type = 'path', metavar = 'FILE',
+           comment = 'Log all responses to a file in hex format.' },
+         { name = 'limit', kind = 'option', type = 'int', exec = validateLimit,
+           comment = 'Limit the number of discovered devices.' }
+      }
+   })
+
+   for name, command in pairs(glCommands.command_mappings.main) do
+      parser.addParam({
+         name = name,
+         kind = 'option',
+         type = 'str',
+         hidden = true,
+         group = 'Friendly Commands',
+         metavar = 'VALUE',
+         eiscpCommand = command,
+         comment = f"Send a friendly value for the {command} receiver command."
+      })
+
+      glFriendlyOptions:push({ name = name, command = command })
+   end
+
+   for command, cmddef in pairs(glCommands.commands.main) do
+      if not parser.getParam(command) then
+         local names = array<string> { command }
+         local lower_name = command:lower()
+         if lower_name != command and not parser.getParam(lower_name) then
+            names:push(lower_name)
+         end
+
+         parser.addParam({
+            names = names,
+            kind = 'option',
+            type = 'str',
+            hidden = true,
+            eiscpCommand = command,
+            comment = f"Show receiver command help for {command}."
+         })
+      end
+   end
+
+   return parser
+end
+
+function applyOptions(Args:table)
+   glConfig.host = Args.host
+   glConfig.port = Args.port
+   glConfig.timeout = Args.timeout
+   glConfig.limit = Args.limit
+   glConfig.responseOutputFile = Args['response-output']
+end
+
+function printBanner()
+   print('Onkyo A/V Remote')
+   print('')
+end
 
 ----------------------------------------------------------------------------------------------------------------------
 -- Show help for a specific command
@@ -120,7 +200,7 @@ function doDiscovery()
    print('(This may take up to ' .. glConfig.timeout .. ' seconds)')
    print('')
 
-   receivers = discovery.findReceivers(glConfig.timeout, glConfig.host, tonumber(arg('limit')))
+   receivers = discovery.findReceivers(glConfig.timeout, glConfig.host, glConfig.limit)
    if not receivers then return end
 
    if #receivers is 0 then
@@ -167,7 +247,7 @@ end
 
 ----------------------------------------------------------------------------------------------------------------------
 
-function doGetInfo()
+function doGetInfo(Verbose)
    -- Requests device information and displays available commands
 
    -- Get discovery data first (for fallback)
@@ -203,10 +283,9 @@ function doGetInfo()
    end
 
    -- Display available commands
-   verbose = arg('info') is 'verbose'
    model = connection.deviceModel or 'unknown'
 
-   display.showAvailableCommands(model, 'main', verbose)
+   display.showAvailableCommands(model, 'main', Verbose)
 
    connection:disconnect()
    return true
@@ -246,7 +325,7 @@ function doSendCommand(Command)
 
          -- Small delay between commands if there are multiple
          if i < #commands then
-            processing.halt(0.25)
+            processing.halt(0.5)
          end
       end
    end
@@ -255,81 +334,94 @@ function doSendCommand(Command)
 end
 
 ----------------------------------------------------------------------------------------------------------------------
+-- Resolve friendly command options into raw ISCP command strings.
 
-   print('Onkyo A/V Remote')
-   print('')
+function findCommandValue(Command:str, Value:str)
+   local cmddef = glCommands.commands.main[Command]
+   if not cmddef or not cmddef.values then return nil end
 
-   action = nil
-   rxOptionValue = regex.new([[([\-a-zA-Z]+)=?(.*)]])
-
-   for k, v in pairs(processing.task().parameters) do
-      opt, val = rxOptionValue.extract(v)
-
-      if v:endsWith('.tiri') then
-         -- Ignore script file
-      elseif opt is 'host' then
-         glConfig.host = val
-      elseif opt is 'port' then
-         glConfig.port = tonumber(val)
-      elseif opt is 'timeout' then
-         glConfig.timeout = tonumber(val)
-      elseif opt is 'response-output' then
-         glConfig.responseOutputFile = val
-      elseif opt is 'help' then
-         if regex.new('^[A-Z]{3}$').test(val) then
-            showCommandHelp(val)
-         else
-            print(glHelp)
-         end
-         return
-      elseif opt is 'discover' then
-         action = doDiscovery
-      elseif opt is 'info' then
-         action = doGetInfo
-      elseif opt is 'command' then
-         action = function() doSendCommand(val) end
-      else
-         -- Check if the parameter is a friendly command (e.g. power=on)
-         friendlyCommand = glCommands.command_mappings.main[opt]
-         if friendlyCommand and val != '' then
-            -- Look up the command definition
-            cmddef = glCommands.commands.main[friendlyCommand]
-            if cmddef and cmddef.values then
-               -- Find the value that matches the friendly name
-               local cmdval
-               for valueKey, valueDef in pairs(cmddef.values) do
-                  if valueDef.name then
-                     if type(valueDef.name) is 'table' then
-                        -- Check if val matches any name in the array
-                        for name in values(valueDef.name) do
-                           if name is val then
-                              cmdval = valueKey
-                              break
-                           end
-                        end
-                     elseif valueDef.name is val then
-                        cmdval = valueKey
-                     end
-                  end
-                  if cmdval then break end
-               end
-
-               if cmdval then
-                  fullCommand = friendlyCommand .. cmdval
-                  doSendCommand(fullCommand)
-                  action = function() end -- Dummy to prevent default action
-               else
-                  print('Error: Value "' .. val .. '" not found for friendly command "' .. opt .. '"\n')
-                  showCommandHelp(friendlyCommand)
-                  return
-               end
+   for value_key, value_def in pairs(cmddef.values) do
+      if value_def.name then
+         if type(value_def.name) is 'table' then
+            for name in values(value_def.name) do
+               if name is Value then return value_key end
             end
+         elseif value_def.name is Value then
+            return value_key
          end
       end
    end
 
-   if action then
-      action()
+   return nil
+end
+
+function collectFriendlyCommands(Args:table)
+   local commands = array<string>
+
+   for option in values(glFriendlyOptions) do
+      local value = Args[option.name]
+      if value != nil then
+         local command_value = findCommandValue(option.command, value)
+         if command_value is nil then
+            return nil, option.name, option.command
+         end
+
+         commands:push(option.command .. command_value)
+      end
+   end
+
+   return commands, nil, nil
+end
+
+   parser = buildOptionParser()
+   args, parse_error = parser.tryProcess()
+
+   if parse_error then
+      print('Error: ' .. parse_error.message)
+      print('')
+      parser.printHelp()
+      return
+   end
+
+   if not args then return end
+
+   if args.help then
+      if args.topic then
+         local param = parser.getParam(tostring(args.topic))
+         if param and param.eiscpCommand then
+            showCommandHelp(param.eiscpCommand)
+         else
+            print(args.text)
+         end
+      else
+         print(args.text)
+      end
+      return
+   end
+
+   applyOptions(args)
+
+   commands, failed_option, failed_command = collectFriendlyCommands(args)
+   if failed_option then
+      print(f'Error: Value "{args[failed_option]}" not found for friendly command "{failed_option}"')
+      print('')
+      showCommandHelp(failed_command)
+      return
+   end
+
+   if args.command then
+      commands:push(args.command)
+   end
+
+   if #commands > 0 then
+      printBanner()
+      doSendCommand(commands:join(','))
+   elseif args.discover then
+      printBanner()
+      doDiscovery()
+   elseif args.info then
+      printBanner()
+      doGetInfo(args.info is 'verbose')
    else
-      print(glHelp)
+      parser.printHelp()
    end
